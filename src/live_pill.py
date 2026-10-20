@@ -86,12 +86,13 @@ class LivePillApp:
         self.root.attributes("-topmost", True)
         self.root.config(bg="#0b0f19")
 
-        # Posiciona no canto superior direito da tela
+        # Posiciona na parte inferior centralizada da tela (acima da barra de tarefas)
         screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
         pill_width = 320
         pill_height = 56
-        x = screen_width - pill_width - 32
-        y = 48
+        x = (screen_width - pill_width) // 2
+        y = screen_height - pill_height - 70
         self.root.geometry(f"{pill_width}x{pill_height}+{x}+{y}")
 
         # Suporte a arrastar a janela livremente
