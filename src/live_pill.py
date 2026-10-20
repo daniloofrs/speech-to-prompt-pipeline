@@ -2,11 +2,11 @@
 
 Funcionalidades:
 1. Widget flutuante Always-on-Top sem bordas, reposicionável na tela.
-2. Captura de microfone 100% em memória usando sounddevice (16kHz mono).
-3. Transcrição local na GPU via faster-whisper (CUDA float16).
-4. Reescrita com LLM local via Ollama (qwen2.5:7b, temperature 0.1).
-5. Cópia automática para a área de transferência do Windows (Ctrl + V).
-6. Totalmente avulso: funciona sem necessidade do Docker ou PostgreSQL.
+2. Clique 100% responsivo em qualquer parte da pílula para iniciar e parar.
+3. Exibição da Transcrição Original e do Prompt Reescrito na tela ao finalizar.
+4. Captura de microfone em memória via sounddevice (16kHz mono).
+5. Transcrição na GPU via faster-whisper e reescrita pelo Ollama (qwen2.5:7b).
+6. Cópia automática para a área de transferência do Windows (Ctrl + V).
 """
 
 import logging
@@ -42,7 +42,6 @@ import sounddevice as sd
 from faster_whisper import WhisperModel
 
 from src.config import (
-    OLLAMA_HOST,
     OLLAMA_MODEL,
     OLLAMA_TEMPERATURE,
     WHISPER_COMPUTE_TYPE,
@@ -58,11 +57,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger("live_pill")
 
-SAMPLE_RATE = 16000  # Taxa nativa do Whisper
+SAMPLE_RATE = 16000
 
 
 class LivePillApp:
-    """Aplicativo de janela flutuante Always-on-Top estilo pílula."""
+    """Janela flutuante Always-on-Top que expande para mostrar transcricao e prompt."""
 
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
@@ -71,8 +70,18 @@ class LivePillApp:
         self.audio_chunks = []
         self.audio_stream: Optional[sd.InputStream] = None
         self.whisper_model: Optional[WhisperModel] = None
+        self.record_start_time = 0.0
 
-        # Fila para comunicacao entre threads e a interface grafica
+        # Variaveis de arraste
+        self.start_x = 0
+        self.start_y = 0
+        self.win_x = 0
+        self.win_y = 0
+        self.has_dragged = False
+
+        self.last_raw_text = ""
+        self.last_prompt_text = ""
+
         self.ui_queue = queue.Queue()
 
         self._configure_window()
@@ -81,144 +90,284 @@ class LivePillApp:
         self._start_queue_listener()
 
     def _configure_window(self) -> None:
-        """Configura a janela como sem bordas, flutuante e reposicionavel."""
+        """Configura a janela como sem bordas, Always-on-Top e centralizada embaixo."""
         self.root.overrideredirect(True)
         self.root.attributes("-topmost", True)
-        self.root.config(bg="#0b0f19")
+        self.root.config(bg="#0f172a")
 
-        # Posiciona na parte inferior centralizada da tela (acima da barra de tarefas)
-        screen_width = self.root.winfo_screenwidth()
-        screen_height = self.root.winfo_screenheight()
-        pill_width = 320
-        pill_height = 56
-        x = (screen_width - pill_width) // 2
-        y = screen_height - pill_height - 70
-        self.root.geometry(f"{pill_width}x{pill_height}+{x}+{y}")
+        self.screen_width = self.root.winfo_screenwidth()
+        self.screen_height = self.root.winfo_screenheight()
 
-        # Suporte a arrastar a janela livremente
-        self._drag_start_x = 0
-        self._drag_start_y = 0
+        self._resize_to_compact()
+
+    def _resize_to_compact(self) -> None:
+        """Define o tamanho compacto de pilula (360x54)."""
+        width = 360
+        height = 54
+        x = (self.screen_width - width) // 2
+        y = self.screen_height - height - 65
+        self.root.geometry(f"{width}x{height}+{x}+{y}")
+        self.results_frame.pack_forget()
+
+    def _resize_to_expanded(self) -> None:
+        """Expande a janela para exibir a transcricao e o prompt gerado (520x290)."""
+        width = 520
+        height = 290
+        x = (self.screen_width - width) // 2
+        y = self.screen_height - height - 65
+        self.root.geometry(f"{width}x{height}+{x}+{y}")
+        self.results_frame.pack(fill="both", expand=True, padx=12, pady=(0, 10))
+
+    def _bind_all_mouse(self, widget: tk.Widget) -> None:
+        """Vincula eventos de mouse recursivamente garantindo clique confiavel em qualquer elemento."""
+        widget.bind("<Button-1>", self._on_mouse_down)
+        widget.bind("<B1-Motion>", self._on_mouse_move)
+        widget.bind("<ButtonRelease-1>", self._on_mouse_up)
+
+    def _on_mouse_down(self, event: tk.Event) -> None:
+        self.start_x = event.x_root
+        self.start_y = event.y_root
+        self.win_x = self.root.winfo_x()
+        self.win_y = self.root.winfo_y()
+        self.has_dragged = False
+
+    def _on_mouse_move(self, event: tk.Event) -> None:
+        dx = event.x_root - self.start_x
+        dy = event.y_root - self.start_y
+        if (dx * dx + dy * dy) > 16:  # Deslocou mais de 4 pixels: considera arraste
+            self.has_dragged = True
+            self.root.geometry(f"+{self.win_x + dx}+{self.win_y + dy}")
+
+    def _on_mouse_up(self, event: tk.Event) -> None:
+        # Se nao foi arraste, dispara a acao de alternar gravacao
+        if not self.has_dragged:
+            self._toggle_recording()
 
     def _build_ui(self) -> None:
-        """Cria o visual de pilula moderno."""
-        self.main_frame = tk.Frame(
+        """Cria os componentes visuais da pilula e do painel expandido."""
+        # 1. Barra Principal (Pilula Compacta)
+        self.pill_bar = tk.Frame(
             self.root,
             bg="#1e293b",
             highlightthickness=1,
             highlightbackground="#475569",
-            padx=12,
-            pady=8,
             cursor="hand2",
+            padx=12,
+            pady=10,
         )
-        self.main_frame.pack(fill="both", expand=True)
+        self.pill_bar.pack(fill="x", side="top")
+        self._bind_all_mouse(self.pill_bar)
 
-        # Eventos de clique e arraste
-        self.main_frame.bind("<Button-1>", self._on_frame_click)
-        self.main_frame.bind("<B1-Motion>", self._on_frame_drag)
-        self.main_frame.bind("<ButtonRelease-1>", self._on_frame_release)
-
-        # Indicador de estado (Icone / Bolinha)
         self.status_icon = tk.Label(
-            self.main_frame,
+            self.pill_bar,
             text="🎙️",
             font=("Segoe UI Emoji", 13),
             bg="#1e293b",
             fg="#94a3b8",
+            cursor="hand2",
         )
         self.status_icon.pack(side="left", padx=(4, 8))
-        self.status_icon.bind("<Button-1>", self._on_frame_click)
+        self._bind_all_mouse(self.status_icon)
 
-        # Texto de acao
         self.status_text = tk.Label(
-            self.main_frame,
-            text="Falar Prompt (Clique)",
+            self.pill_bar,
+            text="Falar Prompt (Clique aqui)",
             font=("Segoe UI", 10, "bold"),
             bg="#1e293b",
             fg="#f1f5f9",
+            cursor="hand2",
         )
         self.status_text.pack(side="left", fill="x", expand=True)
-        self.status_text.bind("<Button-1>", self._on_frame_click)
+        self._bind_all_mouse(self.status_text)
 
-        # Botao discreto para fechar (✕)
+        # Botao discreto para fechar
         self.close_btn = tk.Label(
-            self.main_frame,
+            self.pill_bar,
             text="✕",
-            font=("Segoe UI", 9),
+            font=("Segoe UI", 10),
             bg="#1e293b",
             fg="#64748b",
             cursor="arrow",
+            padx=6,
         )
-        self.close_btn.pack(side="right", padx=(8, 2))
+        self.close_btn.pack(side="right")
         self.close_btn.bind("<Button-1>", lambda e: self.root.destroy())
         self.close_btn.bind("<Enter>", lambda e: self.close_btn.config(fg="#ef4444"))
         self.close_btn.bind("<Leave>", lambda e: self.close_btn.config(fg="#64748b"))
 
-    def _on_frame_click(self, event: tk.Event) -> None:
-        self._drag_start_x = event.x_root - self.root.winfo_x()
-        self._drag_start_y = event.y_root - self.root.winfo_y()
-        self._has_dragged = False
+        # 2. Painel Expandido com a Transcricao e o Prompt Reescrito
+        self.results_frame = tk.Frame(self.root, bg="#0f172a")
 
-    def _on_frame_drag(self, event: tk.Event) -> None:
-        self._has_dragged = True
-        new_x = event.x_root - self._drag_start_x
-        new_y = event.y_root - self._drag_start_y
-        self.root.geometry(f"+{new_x}+{new_y}")
+        # Secao da Transcricao Crua
+        tk.Label(
+            self.results_frame,
+            text="🗣️ TRANSCRIÇÃO DA FALA:",
+            font=("Segoe UI", 8, "bold"),
+            bg="#0f172a",
+            fg="#94a3b8",
+            anchor="w",
+        ).pack(fill="x", pady=(8, 2))
 
-    def _on_frame_release(self, event: tk.Event) -> None:
-        # Se nao foi um arraste significativo, interpreta como clique de acao
-        if not getattr(self, "_has_dragged", False):
-            self._toggle_recording()
+        self.raw_text_box = tk.Text(
+            self.results_frame,
+            height=3,
+            wrap="word",
+            font=("Segoe UI", 9),
+            bg="#1e293b",
+            fg="#cbd5e1",
+            relief="flat",
+            padx=8,
+            pady=6,
+            highlightthickness=1,
+            highlightbackground="#334155",
+        )
+        self.raw_text_box.pack(fill="x", pady=(0, 6))
 
-    def _set_state_idle(self, message: str = "Falar Prompt (Clique)") -> None:
-        """Estado em espera (aguardando fala)."""
+        # Secao do Prompt Refinado
+        tk.Label(
+            self.results_frame,
+            text="✨ PEDIDO PRONTO PARA IA (Copiado para o Ctrl+V):",
+            font=("Segoe UI", 8, "bold"),
+            bg="#0f172a",
+            fg="#34d399",
+            anchor="w",
+        ).pack(fill="x", pady=(2, 2))
+
+        self.prompt_text_box = tk.Text(
+            self.results_frame,
+            height=4,
+            wrap="word",
+            font=("Segoe UI", 9, "bold"),
+            bg="#064e3b",
+            fg="#ecfdf5",
+            relief="flat",
+            padx=8,
+            pady=6,
+            highlightthickness=1,
+            highlightbackground="#059669",
+        )
+        self.prompt_text_box.pack(fill="x", pady=(0, 8))
+
+        # Botoes de acao rapida
+        btn_bar = tk.Frame(self.results_frame, bg="#0f172a")
+        btn_bar.pack(fill="x")
+
+        self.new_record_btn = tk.Button(
+            btn_bar,
+            text="🎙️ Novo Ditado",
+            font=("Segoe UI", 8, "bold"),
+            bg="#2563eb",
+            fg="white",
+            relief="flat",
+            padx=10,
+            pady=4,
+            cursor="hand2",
+            command=self._on_new_record_click,
+        )
+        self.new_record_btn.pack(side="left")
+
+        self.copy_again_btn = tk.Button(
+            btn_bar,
+            text="📋 Copiar Novamente",
+            font=("Segoe UI", 8),
+            bg="#334155",
+            fg="#f8fafc",
+            relief="flat",
+            padx=10,
+            pady=4,
+            cursor="hand2",
+            command=self._on_copy_again_click,
+        )
+        self.copy_again_btn.pack(side="left", padx=8)
+
+        self.minimize_btn = tk.Button(
+            btn_bar,
+            text="Recolher",
+            font=("Segoe UI", 8),
+            bg="#1e293b",
+            fg="#94a3b8",
+            relief="flat",
+            padx=8,
+            pady=4,
+            cursor="hand2",
+            command=self._resize_to_compact,
+        )
+        self.minimize_btn.pack(side="right")
+
+    def _set_colors(self, bg_color: str, border_color: str, icon_color: str, text_color: str) -> None:
+        """Aplica cores dinamicamente na barra da pilula."""
+        self.pill_bar.config(bg=bg_color, highlightbackground=border_color)
+        self.status_icon.config(bg=bg_color, fg=icon_color)
+        self.status_text.config(bg=bg_color, fg=text_color)
+        self.close_btn.config(bg=bg_color)
+
+    def _set_state_idle(self, message: str = "Falar Prompt (Clique aqui)") -> None:
         self.is_recording = False
         self.is_processing = False
-        self.main_frame.config(bg="#1e293b", highlightbackground="#475569")
-        self.status_icon.config(text="🎙️", bg="#1e293b", fg="#94a3b8")
-        self.status_text.config(text=message, bg="#1e293b", fg="#f1f5f9")
-        self.close_btn.config(bg="#1e293b")
+        self._set_colors("#1e293b", "#475569", "#94a3b8", "#f1f5f9")
+        self.status_icon.config(text="🎙️")
+        self.status_text.config(text=message)
 
     def _set_state_recording(self) -> None:
-        """Estado de gravacao ativa."""
         self.is_recording = True
         self.is_processing = False
-        self.main_frame.config(bg="#2d1215", highlightbackground="#ef4444")
-        self.status_icon.config(text="🔴", bg="#2d1215", fg="#ef4444")
-        self.status_text.config(text="Ouvindo... (Clique p/ parar)", bg="#2d1215", fg="#fca5a5")
-        self.close_btn.config(bg="#2d1215")
+        self._resize_to_compact()
+        self._set_colors("#2d1215", "#ef4444", "#ef4444", "#fca5a5")
+        self.status_icon.config(text="🔴")
+        self.status_text.config(text="Ouvindo... (Clique p/ parar)")
+        self.record_start_time = time.time()
+        self._update_recording_timer()
+
+    def _update_recording_timer(self) -> None:
+        if self.is_recording:
+            elapsed = int(time.time() - self.record_start_time)
+            mins = elapsed // 60
+            secs = elapsed % 60
+            self.status_text.config(
+                text=f"Ouvindo ({mins:02d}:{secs:02d}) - Clique p/ parar"
+            )
+            self.root.after(500, self._update_recording_timer)
 
     def _set_state_processing(self) -> None:
-        """Estado de processamento (Whisper + Ollama)."""
         self.is_recording = False
         self.is_processing = True
-        self.main_frame.config(bg="#0c2d48", highlightbackground="#38bdf8")
-        self.status_icon.config(text="⚡", bg="#0c2d48", fg="#38bdf8")
-        self.status_text.config(text="Refinando com IA...", bg="#0c2d48", fg="#bae6fd")
-        self.close_btn.config(bg="#0c2d48")
+        self._set_colors("#0c2d48", "#38bdf8", "#38bdf8", "#bae6fd")
+        self.status_icon.config(text="⚡")
+        self.status_text.config(text="Whisper + Ollama refinando...")
 
-    def _set_state_copied(self, prompt_preview: str) -> None:
-        """Estado de sucesso: prompt pronto e copiado para a area de transferencia."""
+    def _set_state_success(self, raw_text: str, prompt_text: str) -> None:
+        """Exibe os resultados completos na tela e atualiza a barra."""
         self.is_recording = False
         self.is_processing = False
-        self.main_frame.config(bg="#064e3b", highlightbackground="#34d399")
-        self.status_icon.config(text="✓", bg="#064e3b", fg="#34d399")
-        
-        # Encurta a previa do texto se for longa
-        short_preview = (
-            prompt_preview[:32] + "..." if len(prompt_preview) > 32 else prompt_preview
-        )
-        self.status_text.config(
-            text=f"Copiado! \"{short_preview}\"", bg="#064e3b", fg="#6ee7b7"
-        )
-        self.close_btn.config(bg="#064e3b")
+        self.last_raw_text = raw_text
+        self.last_prompt_text = prompt_text
 
-        # Volta para o estado inicial apos 4.5 segundos
-        self.root.after(4500, self._set_state_idle)
+        self._set_colors("#064e3b", "#34d399", "#34d399", "#6ee7b7")
+        self.status_icon.config(text="✓")
+        self.status_text.config(text="Prompt Pronto e Copiado! (Ctrl+V)")
+
+        # Preenche os campos de texto
+        self.raw_text_box.delete("1.0", tk.END)
+        self.raw_text_box.insert("1.0", raw_text)
+
+        self.prompt_text_box.delete("1.0", tk.END)
+        self.prompt_text_box.insert("1.0", prompt_text)
+
+        # Expande a janela para exibir a transcricao e o prompt
+        self._resize_to_expanded()
+
+    def _on_new_record_click(self) -> None:
+        self._set_state_idle()
+        self._toggle_recording()
+
+    def _on_copy_again_click(self) -> None:
+        if self.last_prompt_text:
+            pyperclip.copy(self.last_prompt_text)
+            self.status_text.config(text="✓ Recopiado com sucesso!")
 
     def _toggle_recording(self) -> None:
-        """Alterna entre iniciar e parar a gravacao."""
         if self.is_processing:
-            return  # Ignora cliques enquanto a IA esta gerando
+            return
 
         if not self.is_recording:
             self._start_audio_capture()
@@ -226,7 +375,6 @@ class LivePillApp:
             self._stop_audio_capture()
 
     def _start_audio_capture(self) -> None:
-        """Inicia a captura de audio pelo microfone."""
         self.audio_chunks = []
         self._set_state_recording()
 
@@ -243,14 +391,13 @@ class LivePillApp:
                 callback=audio_callback,
             )
             self.audio_stream.start()
-            logger.info("Microfone ativado. Gravando fala em memoria...")
+            logger.info("Gravando audio do microfone...")
         except Exception as error:
-            logger.error(f"Erro ao abrir microfone: {error}")
+            logger.error(f"Falha ao iniciar microfone: {error}")
             self._set_state_idle("Erro no Microfone!")
-            self.root.after(3000, self._set_state_idle)
+            self.root.after(2500, self._set_state_idle)
 
     def _stop_audio_capture(self) -> None:
-        """Finaliza a gravacao e dispara o processamento em thread separada."""
         if self.audio_stream:
             self.audio_stream.stop()
             self.audio_stream.close()
@@ -262,19 +409,19 @@ class LivePillApp:
 
         self._set_state_processing()
 
-        # Junta os pedacos de audio da memoria em um unico array numpy
+        # Concatena os chunks da RAM em um unico array numpy
         recorded_audio = np.concatenate(self.audio_chunks, axis=0).flatten()
         duration_s = len(recorded_audio) / SAMPLE_RATE
 
-        logger.info(f"Gravacao concluida: {duration_s:.1f} segundos de audio.")
+        logger.info(f"Gravacao finalizada com {duration_s:.1f} segundos.")
 
-        if duration_s < 0.5:
+        if duration_s < 0.6:
             logger.warning("Gravacao muito curta descartada.")
             self._set_state_idle("Fala muito curta!")
             self.root.after(2000, self._set_state_idle)
             return
 
-        # Dispara o Whisper e o Ollama em background para nao travar a interface
+        # Executa Whisper e Ollama em segundo plano
         threading.Thread(
             target=self._process_audio_worker,
             args=(recorded_audio,),
@@ -282,9 +429,7 @@ class LivePillApp:
         ).start()
 
     def _process_audio_worker(self, audio_data: np.ndarray) -> None:
-        """Executa a transcricao e reescrita do prompt na GPU local."""
         try:
-            # 1. Carrega o modelo Whisper caso ainda nao esteja instanciado
             if self.whisper_model is None:
                 self.whisper_model = WhisperModel(
                     WHISPER_MODEL,
@@ -292,22 +437,20 @@ class LivePillApp:
                     compute_type=WHISPER_COMPUTE_TYPE,
                 )
 
-            # 2. Transcricao 100% em memoria
-            logger.info("Transcrevendo fala com Whisper CUDA...")
+            logger.info("Transcrevendo fala com Faster-Whisper...")
             segments, info = self.whisper_model.transcribe(
                 audio_data, language="pt", beam_size=5
             )
             raw_text = " ".join(seg.text.strip() for seg in segments).strip()
 
             if not raw_text:
-                logger.warning("Nenhuma fala detectada pelo modelo.")
+                logger.warning("Nenhum som compreendido.")
                 self.ui_queue.put(("error", "Nenhuma fala detectada"))
                 return
 
-            logger.info(f"Transcricao crua: \"{raw_text}\"")
+            logger.info(f"Transcricao gerada: \"{raw_text}\"")
 
-            # 3. Reescrita com LLM local via Ollama
-            logger.info(f"Reescrevendo com Ollama ({OLLAMA_MODEL})...")
+            logger.info(f"Chamando Ollama ({OLLAMA_MODEL})...")
             llm_output = call_ollama(
                 text=raw_text,
                 model=OLLAMA_MODEL,
@@ -315,46 +458,44 @@ class LivePillApp:
             )
             pedido, duvidas = parse_llm_response(llm_output)
 
-            # 4. Copia automaticamente para a area de transferencia do Windows
+            # Copia automaticamente para a area de transferencia
             pyperclip.copy(pedido)
-            logger.info(f"SUCESSO: Prompt copiado para a area de transferencia! ({len(pedido)} chars)")
+            logger.info("Prompt copiado para a area de transferencia!")
 
-            # 5. Notifica a UI
-            self.ui_queue.put(("success", pedido))
+            # Envia tanto o texto cru quanto o pedido para a interface
+            self.ui_queue.put(("success", (raw_text, pedido)))
 
         except Exception as error:
             logger.error(f"Erro no processamento da pilula: {error}")
             self.ui_queue.put(("error", "Falha ao processar"))
 
     def _start_queue_listener(self) -> None:
-        """Verifica periodicamente eventos da thread de background."""
         try:
             while not self.ui_queue.empty():
                 msg_type, payload = self.ui_queue.get_nowait()
                 if msg_type == "success":
-                    self._set_state_copied(payload)
+                    raw_text, prompt_text = payload
+                    self._set_state_success(raw_text, prompt_text)
                 elif msg_type == "error":
                     self._set_state_idle(payload)
-                    self.root.after(3000, self._set_state_idle)
+                    self.root.after(2500, self._set_state_idle)
         except Exception:
             pass
 
-        # Checa novamente a cada 100ms
         self.root.after(100, self._start_queue_listener)
 
     def _load_whisper_in_background(self) -> None:
-        """Pre-carrega o modelo Whisper em background para a primeira fala ser instantanea."""
         def load():
             try:
-                logger.info("Inicializando modelo Whisper na GPU em segundo plano...")
+                logger.info("Aquecendo Whisper na GPU em segundo plano...")
                 self.whisper_model = WhisperModel(
                     WHISPER_MODEL,
                     device=WHISPER_DEVICE,
                     compute_type=WHISPER_COMPUTE_TYPE,
                 )
-                logger.info("Whisper pronto e aquecido na GPU!")
+                logger.info("Whisper pronto!")
             except Exception as e:
-                logger.warning(f"Fallback no pre-carregamento do Whisper: {e}")
+                logger.warning(f"Aviso no carregamento do Whisper: {e}")
 
         threading.Thread(target=load, daemon=True).start()
 
@@ -363,10 +504,10 @@ def main() -> None:
     root = tk.Tk()
     app = LivePillApp(root)
     print("\n>>> Pílula Flutuante Ativa na sua tela!")
-    print("    - Clique na pílula para falar.")
+    print("    - Clique em QUALQUER parte da pílula para falar.")
     print("    - Clique novamente para encerrar.")
-    print("    - O prompt pronto é copiado direto para o seu Ctrl+V.")
-    print("    - Arraste a pílula para onde preferir na tela.")
+    print("    - A transcrição e o prompt aparecem na tela e são copiados para o Ctrl+V.")
+    print("    - Arraste a pílula para onde preferir.")
     print("    - Clique no '✕' para encerrar.\n")
     root.mainloop()
 
