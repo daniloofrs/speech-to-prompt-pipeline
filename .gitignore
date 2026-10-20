@@ -1,0 +1,24 @@
+# Ambiente virtual
+venv/
+.venv/
+env/
+
+# Configurações locais e segredos
+.env
+
+# Arquivo de progresso local (pedido para não subir ao GitHub)
+progresso.md
+
+# Cache do Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.pytest_cache/
+
+# Áudios de teste e dados locais
+data/samples/*
+!data/samples/.gitkeep
+
+# IDEs
+.vscode/
+.idea/
