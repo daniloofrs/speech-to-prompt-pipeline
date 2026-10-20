@@ -172,6 +172,19 @@ python src/dashboard.py --open
 
 ---
 
+### 🎙️ Bônus: Pílula Flutuante Avulsa (Live Speech-to-Prompt)
+Quer ditar um prompt por voz enquanto programa ou navega e receber o texto refinado direto no seu `Ctrl + V`?
+```powershell
+python src/live_pill.py
+```
+- Uma **pílula discreta e flutuante** aparecerá no canto da tela (*Always-on-Top* e arrastável).
+- **1º Clique:** Começa a capturar seu microfone (`🔴 Ouvindo...`).
+- **2º Clique:** O áudio é transcrito em memória pela GPU e reescrito pelo Ollama.
+- **Resultado:** A pílula muda para verde (`✓ Copiado!`) e o prompt pronto entra automaticamente na sua área de transferência do Windows — basta dar `Ctrl + V` onde estiver.
+- **100% Avulso:** Funciona em memória RAM sem precisar do Docker ou banco de dados.
+
+---
+
 ## 📁 Estrutura de Pastas
 
 ```text
@@ -189,7 +202,8 @@ speech-to-prompt-pipeline/
 │   ├── ingest.py            # Etapa 1: Ingestão, hash e Whisper GPU
 │   ├── rewrite.py           # Etapa 2: Chamada ao Ollama e formatação
 │   ├── evaluate.py          # Etapa 3: Curadoria humana e cálculo de taxas
-│   └── dashboard.py         # Etapa 4: Interface web e CLI de monitoramento
+│   ├── dashboard.py         # Etapa 4: Interface web e CLI de monitoramento
+│   └── live_pill.py         # Pílula flutuante avulsa para ditado em tempo real
 ├── .env.example             # Template seguro de credenciais
 ├── .gitignore               # Ignora .env, venv/, caches e áudios locais
 ├── docker-compose.yml       # Orquestração do container PostgreSQL

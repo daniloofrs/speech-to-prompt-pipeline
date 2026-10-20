@@ -22,3 +22,6 @@ data/samples/*
 # IDEs
 .vscode/
 .idea/
+
+# Superpowers Visual Companion
+.superpowers/
