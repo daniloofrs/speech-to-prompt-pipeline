@@ -1,12 +1,11 @@
 """Pílula Flutuante Avulsa para ditado de voz e geração instantânea de prompts (Live Pill).
 
-Funcionalidades:
-1. Widget flutuante Always-on-Top sem bordas, reposicionável na tela.
-2. Clique 100% responsivo em qualquer parte da pílula para iniciar e parar.
-3. Exibição da Transcrição Original e do Prompt Reescrito na tela ao finalizar.
-4. Captura de microfone em memória via sounddevice (16kHz mono).
-5. Transcrição na GPU via faster-whisper e reescrita pelo Ollama (qwen2.5:7b).
-6. Cópia automática para a área de transferência do Windows (Ctrl + V).
+Design:
+- Formato pílula (cápsula) 100% arredondada com cantos verdadeiros via máscara de transparência.
+- Efeito translúcido (frosted glass) com alpha 0.92.
+- Microcopy humanizado e profissional (sem jargões de IA como 'Whisper + Ollama').
+- Expande suavemente após o processamento para exibir a transcrição e o pedido gerado.
+- Cópia automática para a área de transferência do Windows (Ctrl + V).
 """
 
 import logging
@@ -24,7 +23,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-# Injeta DLLs da NVIDIA no PATH no Windows para garantir aceleracao CUDA
+# Injeta DLLs da NVIDIA no PATH no Windows para garantir aceleração CUDA
 if sys.platform == "win32":
     site_packages = Path(sys.prefix) / "Lib" / "site-packages"
     for nvidia_bin in site_packages.glob("nvidia/**/bin"):
@@ -58,21 +57,50 @@ logging.basicConfig(
 logger = logging.getLogger("live_pill")
 
 SAMPLE_RATE = 16000
+KEY_COLOR = "#000001"  # Cor chave para transparência dos cantos no Windows
+
+
+def draw_smooth_round_rect(
+    canvas: tk.Canvas,
+    x1: float,
+    y1: float,
+    x2: float,
+    y2: float,
+    radius: float = 22,
+    **kwargs,
+) -> int:
+    """Desenha um retângulo arredondado ultra suave usando spline Bézier."""
+    points = [
+        x1 + radius, y1,
+        x2 - radius, y1,
+        x2, y1,
+        x2, y1 + radius,
+        x2, y2 - radius,
+        x2, y2,
+        x2 - radius, y2,
+        x1 + radius, y2,
+        x1, y2,
+        x1, y2 - radius,
+        x1, y1 + radius,
+        x1, y1,
+    ]
+    return canvas.create_polygon(points, smooth=True, **kwargs)
 
 
 class LivePillApp:
-    """Janela flutuante Always-on-Top que expande para mostrar transcricao e prompt."""
+    """Widget de pílula translúcida e arredondada para ditado de prompts."""
 
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.is_recording = False
         self.is_processing = False
+        self.is_expanded = False
         self.audio_chunks = []
         self.audio_stream: Optional[sd.InputStream] = None
         self.whisper_model: Optional[WhisperModel] = None
         self.record_start_time = 0.0
 
-        # Variaveis de arraste
+        # Coordenadas para arraste
         self.start_x = 0
         self.start_y = 0
         self.win_x = 0
@@ -82,45 +110,273 @@ class LivePillApp:
         self.last_raw_text = ""
         self.last_prompt_text = ""
 
+        # Paleta de cores moderna (Zinc / Glassmorphism)
+        self.theme = {
+            "idle_bg": "#121217",
+            "idle_border": "#27272a",
+            "idle_text": "#f4f4f5",
+            "recording_bg": "#2a0f12",
+            "recording_border": "#ef4444",
+            "recording_text": "#fca5a5",
+            "processing_bg": "#0c1b2e",
+            "processing_border": "#0284c7",
+            "processing_text": "#7dd3fc",
+            "success_bg": "#06281e",
+            "success_border": "#10b981",
+            "success_text": "#6ee7b7",
+        }
+
         self.ui_queue = queue.Queue()
 
-        self._build_ui()
         self._configure_window()
+        self._build_ui()
         self._load_whisper_in_background()
         self._start_queue_listener()
 
     def _configure_window(self) -> None:
-        """Configura a janela como sem bordas, Always-on-Top e centralizada embaixo."""
+        """Configura a janela como sem bordas, Always-on-Top e translúcida."""
         self.root.overrideredirect(True)
         self.root.attributes("-topmost", True)
-        self.root.config(bg="#0f172a")
+        self.root.config(bg=KEY_COLOR)
+        self.root.attributes("-transparentcolor", KEY_COLOR)
+        self.root.attributes("-alpha", 0.93)  # Efeito translúcido frosted glass
 
         self.screen_width = self.root.winfo_screenwidth()
         self.screen_height = self.root.winfo_screenheight()
 
-        self._resize_to_compact()
+    def _build_ui(self) -> None:
+        """Monta a estrutura visual base com Canvas transparente."""
+        self.container = tk.Frame(self.root, bg=KEY_COLOR)
+        self.container.pack(fill="both", expand=True)
 
-    def _resize_to_compact(self) -> None:
-        """Define o tamanho compacto de pilula (360x54)."""
-        width = 360
-        height = 54
+        # Canvas para desenho da pílula arredondada
+        self.pill_canvas = tk.Canvas(
+            self.container,
+            bg=KEY_COLOR,
+            highlightthickness=0,
+            cursor="hand2",
+        )
+        self.pill_canvas.pack(fill="both", expand=True)
+
+        self._bind_mouse(self.pill_canvas)
+
+        # Painel expandido de resultados (oculto por padrão)
+        self.results_frame = tk.Frame(
+            self.container,
+            bg="#121217",
+            highlightthickness=1,
+            highlightbackground="#27272a",
+            padx=16,
+            pady=12,
+        )
+
+        self._build_expanded_results()
+        self._show_compact_pill()
+
+    def _build_expanded_results(self) -> None:
+        """Cria os elementos da visão expandida de transcrição e prompt."""
+        # Cabeçalho com status e fechar
+        header = tk.Frame(self.results_frame, bg="#121217")
+        header.pack(fill="x", pady=(0, 8))
+
+        self.badge_status = tk.Label(
+            header,
+            text="✓ Copiado para o Ctrl+V",
+            font=("Segoe UI", 9, "bold"),
+            bg="#064e3b",
+            fg="#34d399",
+            padx=8,
+            pady=2,
+        )
+        self.badge_status.pack(side="left")
+
+        close_lbl = tk.Label(
+            header,
+            text="✕",
+            font=("Segoe UI", 10),
+            bg="#121217",
+            fg="#71717a",
+            cursor="hand2",
+            padx=4,
+        )
+        close_lbl.pack(side="right")
+        close_lbl.bind("<Button-1>", lambda e: self.root.destroy())
+        close_lbl.bind("<Enter>", lambda e: close_lbl.config(fg="#ef4444"))
+        close_lbl.bind("<Leave>", lambda e: close_lbl.config(fg="#71717a"))
+
+        # Transcrição da Fala
+        tk.Label(
+            self.results_frame,
+            text="O QUE VOCÊ DISSE:",
+            font=("Segoe UI", 8, "bold"),
+            bg="#121217",
+            fg="#71717a",
+            anchor="w",
+        ).pack(fill="x", pady=(4, 2))
+
+        self.raw_text_box = tk.Text(
+            self.results_frame,
+            height=3,
+            wrap="word",
+            font=("Segoe UI", 9),
+            bg="#18181b",
+            fg="#d4d4d8",
+            relief="flat",
+            padx=10,
+            pady=6,
+            highlightthickness=1,
+            highlightbackground="#27272a",
+        )
+        self.raw_text_box.pack(fill="x", pady=(0, 8))
+
+        # Pedido Refinado
+        tk.Label(
+            self.results_frame,
+            text="PEDIDO PRONTO PARA IA:",
+            font=("Segoe UI", 8, "bold"),
+            bg="#121217",
+            fg="#34d399",
+            anchor="w",
+        ).pack(fill="x", pady=(2, 2))
+
+        self.prompt_text_box = tk.Text(
+            self.results_frame,
+            height=4,
+            wrap="word",
+            font=("Segoe UI", 9, "bold"),
+            bg="#0d241c",
+            fg="#ecfdf5",
+            relief="flat",
+            padx=10,
+            pady=6,
+            highlightthickness=1,
+            highlightbackground="#065f46",
+        )
+        self.prompt_text_box.pack(fill="x", pady=(0, 10))
+
+        # Barra de Ações
+        actions = tk.Frame(self.results_frame, bg="#121217")
+        actions.pack(fill="x")
+
+        self.btn_new = tk.Button(
+            actions,
+            text="🎙️ Falar Novamente",
+            font=("Segoe UI", 8, "bold"),
+            bg="#27272a",
+            fg="#f4f4f5",
+            activebackground="#3f3f46",
+            activeforeground="#ffffff",
+            relief="flat",
+            padx=12,
+            pady=5,
+            cursor="hand2",
+            command=self._on_new_record_click,
+        )
+        self.btn_new.pack(side="left")
+
+        self.btn_copy = tk.Button(
+            actions,
+            text="📋 Copiar Novamente",
+            font=("Segoe UI", 8),
+            bg="#18181b",
+            fg="#a1a1aa",
+            activebackground="#27272a",
+            activeforeground="#ffffff",
+            relief="flat",
+            padx=10,
+            pady=5,
+            cursor="hand2",
+            command=self._on_copy_again_click,
+        )
+        self.btn_copy.pack(side="left", padx=8)
+
+        self.btn_collapse = tk.Button(
+            actions,
+            text="Recolher",
+            font=("Segoe UI", 8),
+            bg="#121217",
+            fg="#71717a",
+            relief="flat",
+            padx=8,
+            pady=5,
+            cursor="hand2",
+            command=self._show_compact_pill,
+        )
+        self.btn_collapse.pack(side="right")
+
+    def _show_compact_pill(self, text: str = "🎙️  Falar comando", state_type: str = "idle") -> None:
+        """Exibe a pílula compacta de formato cápsula perfeitamente arredondada."""
+        self.is_expanded = False
+        self.results_frame.pack_forget()
+        self.pill_canvas.pack(fill="both", expand=True)
+
+        width = 330
+        height = 48
         x = (self.screen_width - width) // 2
-        y = self.screen_height - height - 65
+        y = self.screen_height - height - 60
         self.root.geometry(f"{width}x{height}+{x}+{y}")
-        if hasattr(self, "results_frame"):
-            self.results_frame.pack_forget()
 
-    def _resize_to_expanded(self) -> None:
-        """Expande a janela para exibir a transcricao e o prompt gerado (520x290)."""
-        width = 520
+        self.pill_canvas.delete("all")
+
+        # Seleciona as cores do estado atual
+        bg_col = self.theme.get(f"{state_type}_bg", self.theme["idle_bg"])
+        border_col = self.theme.get(f"{state_type}_border", self.theme["idle_border"])
+        text_col = self.theme.get(f"{state_type}_text", self.theme["idle_text"])
+
+        # Desenha a cápsula perfeitamente arredondada (radius = 22px para height 46px)
+        draw_smooth_round_rect(
+            self.pill_canvas,
+            x1=2,
+            y1=2,
+            x2=width - 2,
+            y2=height - 2,
+            radius=22,
+            fill=bg_col,
+            outline=border_col,
+            width=1.5,
+        )
+
+        # Texto centralizado e legível
+        self.canvas_text = self.pill_canvas.create_text(
+            width // 2 - 12,
+            height // 2,
+            text=text,
+            fill=text_col,
+            font=("Segoe UI", 10, "bold"),
+        )
+
+        # Botão sutil de fechar (✕)
+        self.canvas_close = self.pill_canvas.create_text(
+            width - 22,
+            height // 2,
+            text="✕",
+            fill="#52525b",
+            font=("Segoe UI", 9),
+        )
+
+    def _show_expanded_results(self, raw_text: str, prompt_text: str) -> None:
+        """Exibe o painel expandido translúcido com transcrição e prompt prontos."""
+        self.is_expanded = True
+        self.pill_canvas.pack_forget()
+
+        width = 500
         height = 290
         x = (self.screen_width - width) // 2
-        y = self.screen_height - height - 65
+        y = self.screen_height - height - 60
         self.root.geometry(f"{width}x{height}+{x}+{y}")
-        self.results_frame.pack(fill="both", expand=True, padx=12, pady=(0, 10))
 
-    def _bind_all_mouse(self, widget: tk.Widget) -> None:
-        """Vincula eventos de mouse recursivamente garantindo clique confiavel em qualquer elemento."""
+        self.last_raw_text = raw_text
+        self.last_prompt_text = prompt_text
+
+        self.raw_text_box.delete("1.0", tk.END)
+        self.raw_text_box.insert("1.0", raw_text)
+
+        self.prompt_text_box.delete("1.0", tk.END)
+        self.prompt_text_box.insert("1.0", prompt_text)
+
+        self.results_frame.pack(fill="both", expand=True)
+
+    def _bind_mouse(self, widget: tk.Widget) -> None:
         widget.bind("<Button-1>", self._on_mouse_down)
         widget.bind("<B1-Motion>", self._on_mouse_move)
         widget.bind("<ButtonRelease-1>", self._on_mouse_up)
@@ -135,236 +391,20 @@ class LivePillApp:
     def _on_mouse_move(self, event: tk.Event) -> None:
         dx = event.x_root - self.start_x
         dy = event.y_root - self.start_y
-        if (dx * dx + dy * dy) > 16:  # Deslocou mais de 4 pixels: considera arraste
+        if (dx * dx + dy * dy) > 16:
             self.has_dragged = True
             self.root.geometry(f"+{self.win_x + dx}+{self.win_y + dy}")
 
     def _on_mouse_up(self, event: tk.Event) -> None:
-        # Se nao foi arraste, dispara a acao de alternar gravacao
-        if not self.has_dragged:
-            self._toggle_recording()
+        if self.has_dragged:
+            return
 
-    def _build_ui(self) -> None:
-        """Cria os componentes visuais da pilula e do painel expandido."""
-        # 1. Barra Principal (Pilula Compacta)
-        self.pill_bar = tk.Frame(
-            self.root,
-            bg="#1e293b",
-            highlightthickness=1,
-            highlightbackground="#475569",
-            cursor="hand2",
-            padx=12,
-            pady=10,
-        )
-        self.pill_bar.pack(fill="x", side="top")
-        self._bind_all_mouse(self.pill_bar)
+        # Verifica se clicou próximo ao botão de fechar (canto direito)
+        if event.x > 300:
+            self.root.destroy()
+            return
 
-        self.status_icon = tk.Label(
-            self.pill_bar,
-            text="🎙️",
-            font=("Segoe UI Emoji", 13),
-            bg="#1e293b",
-            fg="#94a3b8",
-            cursor="hand2",
-        )
-        self.status_icon.pack(side="left", padx=(4, 8))
-        self._bind_all_mouse(self.status_icon)
-
-        self.status_text = tk.Label(
-            self.pill_bar,
-            text="Falar Prompt (Clique aqui)",
-            font=("Segoe UI", 10, "bold"),
-            bg="#1e293b",
-            fg="#f1f5f9",
-            cursor="hand2",
-        )
-        self.status_text.pack(side="left", fill="x", expand=True)
-        self._bind_all_mouse(self.status_text)
-
-        # Botao discreto para fechar
-        self.close_btn = tk.Label(
-            self.pill_bar,
-            text="✕",
-            font=("Segoe UI", 10),
-            bg="#1e293b",
-            fg="#64748b",
-            cursor="arrow",
-            padx=6,
-        )
-        self.close_btn.pack(side="right")
-        self.close_btn.bind("<Button-1>", lambda e: self.root.destroy())
-        self.close_btn.bind("<Enter>", lambda e: self.close_btn.config(fg="#ef4444"))
-        self.close_btn.bind("<Leave>", lambda e: self.close_btn.config(fg="#64748b"))
-
-        # 2. Painel Expandido com a Transcricao e o Prompt Reescrito
-        self.results_frame = tk.Frame(self.root, bg="#0f172a")
-
-        # Secao da Transcricao Crua
-        tk.Label(
-            self.results_frame,
-            text="🗣️ TRANSCRIÇÃO DA FALA:",
-            font=("Segoe UI", 8, "bold"),
-            bg="#0f172a",
-            fg="#94a3b8",
-            anchor="w",
-        ).pack(fill="x", pady=(8, 2))
-
-        self.raw_text_box = tk.Text(
-            self.results_frame,
-            height=3,
-            wrap="word",
-            font=("Segoe UI", 9),
-            bg="#1e293b",
-            fg="#cbd5e1",
-            relief="flat",
-            padx=8,
-            pady=6,
-            highlightthickness=1,
-            highlightbackground="#334155",
-        )
-        self.raw_text_box.pack(fill="x", pady=(0, 6))
-
-        # Secao do Prompt Refinado
-        tk.Label(
-            self.results_frame,
-            text="✨ PEDIDO PRONTO PARA IA (Copiado para o Ctrl+V):",
-            font=("Segoe UI", 8, "bold"),
-            bg="#0f172a",
-            fg="#34d399",
-            anchor="w",
-        ).pack(fill="x", pady=(2, 2))
-
-        self.prompt_text_box = tk.Text(
-            self.results_frame,
-            height=4,
-            wrap="word",
-            font=("Segoe UI", 9, "bold"),
-            bg="#064e3b",
-            fg="#ecfdf5",
-            relief="flat",
-            padx=8,
-            pady=6,
-            highlightthickness=1,
-            highlightbackground="#059669",
-        )
-        self.prompt_text_box.pack(fill="x", pady=(0, 8))
-
-        # Botoes de acao rapida
-        btn_bar = tk.Frame(self.results_frame, bg="#0f172a")
-        btn_bar.pack(fill="x")
-
-        self.new_record_btn = tk.Button(
-            btn_bar,
-            text="🎙️ Novo Ditado",
-            font=("Segoe UI", 8, "bold"),
-            bg="#2563eb",
-            fg="white",
-            relief="flat",
-            padx=10,
-            pady=4,
-            cursor="hand2",
-            command=self._on_new_record_click,
-        )
-        self.new_record_btn.pack(side="left")
-
-        self.copy_again_btn = tk.Button(
-            btn_bar,
-            text="📋 Copiar Novamente",
-            font=("Segoe UI", 8),
-            bg="#334155",
-            fg="#f8fafc",
-            relief="flat",
-            padx=10,
-            pady=4,
-            cursor="hand2",
-            command=self._on_copy_again_click,
-        )
-        self.copy_again_btn.pack(side="left", padx=8)
-
-        self.minimize_btn = tk.Button(
-            btn_bar,
-            text="Recolher",
-            font=("Segoe UI", 8),
-            bg="#1e293b",
-            fg="#94a3b8",
-            relief="flat",
-            padx=8,
-            pady=4,
-            cursor="hand2",
-            command=self._resize_to_compact,
-        )
-        self.minimize_btn.pack(side="right")
-
-    def _set_colors(self, bg_color: str, border_color: str, icon_color: str, text_color: str) -> None:
-        """Aplica cores dinamicamente na barra da pilula."""
-        self.pill_bar.config(bg=bg_color, highlightbackground=border_color)
-        self.status_icon.config(bg=bg_color, fg=icon_color)
-        self.status_text.config(bg=bg_color, fg=text_color)
-        self.close_btn.config(bg=bg_color)
-
-    def _set_state_idle(self, message: str = "Falar Prompt (Clique aqui)") -> None:
-        self.is_recording = False
-        self.is_processing = False
-        self._set_colors("#1e293b", "#475569", "#94a3b8", "#f1f5f9")
-        self.status_icon.config(text="🎙️")
-        self.status_text.config(text=message)
-
-    def _set_state_recording(self) -> None:
-        self.is_recording = True
-        self.is_processing = False
-        self._resize_to_compact()
-        self._set_colors("#2d1215", "#ef4444", "#ef4444", "#fca5a5")
-        self.status_icon.config(text="🔴")
-        self.status_text.config(text="Ouvindo... (Clique p/ parar)")
-        self.record_start_time = time.time()
-        self._update_recording_timer()
-
-    def _update_recording_timer(self) -> None:
-        if self.is_recording:
-            elapsed = int(time.time() - self.record_start_time)
-            mins = elapsed // 60
-            secs = elapsed % 60
-            self.status_text.config(
-                text=f"Ouvindo ({mins:02d}:{secs:02d}) - Clique p/ parar"
-            )
-            self.root.after(500, self._update_recording_timer)
-
-    def _set_state_processing(self) -> None:
-        self.is_recording = False
-        self.is_processing = True
-        self._set_colors("#0c2d48", "#38bdf8", "#38bdf8", "#bae6fd")
-        self.status_icon.config(text="⚡")
-        self.status_text.config(text="Whisper + Ollama refinando...")
-
-    def _set_state_success(self, raw_text: str, prompt_text: str) -> None:
-        """Exibe os resultados completos na tela e atualiza a barra."""
-        self.is_recording = False
-        self.is_processing = False
-        self.last_raw_text = raw_text
-        self.last_prompt_text = prompt_text
-
-        self._set_colors("#064e3b", "#34d399", "#34d399", "#6ee7b7")
-        self.status_icon.config(text="✓")
-        self.status_text.config(text="Prompt Pronto e Copiado! (Ctrl+V)")
-
-        # Preenche os campos de texto
-        self.raw_text_box.delete("1.0", tk.END)
-        self.raw_text_box.insert("1.0", raw_text)
-
-        self.prompt_text_box.delete("1.0", tk.END)
-        self.prompt_text_box.insert("1.0", prompt_text)
-
-        # Expande a janela para exibir a transcricao e o prompt
-        self._resize_to_expanded()
-
-    def _on_new_record_click(self) -> None:
-        self._set_state_idle()
         self._toggle_recording()
-
-    def _on_copy_again_click(self) -> None:
-        if self.last_prompt_text:
-            pyperclip.copy(self.last_prompt_text)
-            self.status_text.config(text="✓ Recopiado com sucesso!")
 
     def _toggle_recording(self) -> None:
         if self.is_processing:
@@ -377,7 +417,10 @@ class LivePillApp:
 
     def _start_audio_capture(self) -> None:
         self.audio_chunks = []
-        self._set_state_recording()
+        self.is_recording = True
+        self.record_start_time = time.time()
+        self._show_compact_pill("🔴  Ouvindo... (00:00)", state_type="recording")
+        self._update_recording_timer()
 
         def audio_callback(indata, frames, time_info, status):
             if status:
@@ -392,37 +435,45 @@ class LivePillApp:
                 callback=audio_callback,
             )
             self.audio_stream.start()
-            logger.info("Gravando audio do microfone...")
+            logger.info("Microfone ativado.")
         except Exception as error:
-            logger.error(f"Falha ao iniciar microfone: {error}")
-            self._set_state_idle("Erro no Microfone!")
-            self.root.after(2500, self._set_state_idle)
+            logger.error(f"Erro no microfone: {error}")
+            self._show_compact_pill("⚠️  Microfone indisponível", state_type="idle")
+            self.root.after(2500, lambda: self._show_compact_pill("🎙️  Falar comando"))
+
+    def _update_recording_timer(self) -> None:
+        if self.is_recording:
+            elapsed = int(time.time() - self.record_start_time)
+            mins = elapsed // 60
+            secs = elapsed % 60
+            self._show_compact_pill(
+                f"🔴  Ouvindo... ({mins:02d}:{secs:02d})", state_type="recording"
+            )
+            self.root.after(500, self._update_recording_timer)
 
     def _stop_audio_capture(self) -> None:
+        self.is_recording = False
         if self.audio_stream:
             self.audio_stream.stop()
             self.audio_stream.close()
             self.audio_stream = None
 
         if not self.audio_chunks:
-            self._set_state_idle()
+            self._show_compact_pill("🎙️  Falar comando")
             return
 
-        self._set_state_processing()
+        self.is_processing = True
+        self._show_compact_pill("✨  Estruturando pedido...", state_type="processing")
 
-        # Concatena os chunks da RAM em um unico array numpy
         recorded_audio = np.concatenate(self.audio_chunks, axis=0).flatten()
         duration_s = len(recorded_audio) / SAMPLE_RATE
 
-        logger.info(f"Gravacao finalizada com {duration_s:.1f} segundos.")
-
         if duration_s < 0.6:
-            logger.warning("Gravacao muito curta descartada.")
-            self._set_state_idle("Fala muito curta!")
-            self.root.after(2000, self._set_state_idle)
+            self.is_processing = False
+            self._show_compact_pill("⚠️  Fala muito curta", state_type="idle")
+            self.root.after(2000, lambda: self._show_compact_pill("🎙️  Falar comando"))
             return
 
-        # Executa Whisper e Ollama em segundo plano
         threading.Thread(
             target=self._process_audio_worker,
             args=(recorded_audio,),
@@ -438,20 +489,17 @@ class LivePillApp:
                     compute_type=WHISPER_COMPUTE_TYPE,
                 )
 
-            logger.info("Transcrevendo fala com Faster-Whisper...")
+            logger.info("Transcrevendo fala...")
             segments, info = self.whisper_model.transcribe(
                 audio_data, language="pt", beam_size=5
             )
             raw_text = " ".join(seg.text.strip() for seg in segments).strip()
 
             if not raw_text:
-                logger.warning("Nenhum som compreendido.")
                 self.ui_queue.put(("error", "Nenhuma fala detectada"))
                 return
 
-            logger.info(f"Transcricao gerada: \"{raw_text}\"")
-
-            logger.info(f"Chamando Ollama ({OLLAMA_MODEL})...")
+            logger.info("Reescrevendo com modelo de linguagem local...")
             llm_output = call_ollama(
                 text=raw_text,
                 model=OLLAMA_MODEL,
@@ -459,42 +507,51 @@ class LivePillApp:
             )
             pedido, duvidas = parse_llm_response(llm_output)
 
-            # Copia automaticamente para a area de transferencia
+            # Copia automaticamente para o clipboard do Windows
             pyperclip.copy(pedido)
-            logger.info("Prompt copiado para a area de transferencia!")
+            logger.info("Prompt pronto copiado para a área de transferência!")
 
-            # Envia tanto o texto cru quanto o pedido para a interface
             self.ui_queue.put(("success", (raw_text, pedido)))
 
         except Exception as error:
-            logger.error(f"Erro no processamento da pilula: {error}")
+            logger.error(f"Erro no processamento: {error}")
             self.ui_queue.put(("error", "Falha ao processar"))
 
     def _start_queue_listener(self) -> None:
         try:
             while not self.ui_queue.empty():
                 msg_type, payload = self.ui_queue.get_nowait()
+                self.is_processing = False
                 if msg_type == "success":
                     raw_text, prompt_text = payload
-                    self._set_state_success(raw_text, prompt_text)
+                    self._show_expanded_results(raw_text, prompt_text)
                 elif msg_type == "error":
-                    self._set_state_idle(payload)
-                    self.root.after(2500, self._set_state_idle)
+                    self._show_compact_pill(f"⚠️  {payload}", state_type="idle")
+                    self.root.after(2500, lambda: self._show_compact_pill("🎙️  Falar comando"))
         except Exception:
             pass
 
         self.root.after(100, self._start_queue_listener)
 
+    def _on_new_record_click(self) -> None:
+        self._show_compact_pill("🎙️  Falar comando")
+        self._toggle_recording()
+
+    def _on_copy_again_click(self) -> None:
+        if self.last_prompt_text:
+            pyperclip.copy(self.last_prompt_text)
+            self.badge_status.config(text="✓ Recopiado com sucesso!")
+            self.root.after(2000, lambda: self.badge_status.config(text="✓ Copiado para o Ctrl+V"))
+
     def _load_whisper_in_background(self) -> None:
         def load():
             try:
-                logger.info("Aquecendo Whisper na GPU em segundo plano...")
                 self.whisper_model = WhisperModel(
                     WHISPER_MODEL,
                     device=WHISPER_DEVICE,
                     compute_type=WHISPER_COMPUTE_TYPE,
                 )
-                logger.info("Whisper pronto!")
+                logger.info("Modelo pronto na GPU.")
             except Exception as e:
                 logger.warning(f"Aviso no carregamento do Whisper: {e}")
 
@@ -504,12 +561,10 @@ class LivePillApp:
 def main() -> None:
     root = tk.Tk()
     app = LivePillApp(root)
-    print("\n>>> Pílula Flutuante Ativa na sua tela!")
-    print("    - Clique em QUALQUER parte da pílula para falar.")
-    print("    - Clique novamente para encerrar.")
-    print("    - A transcrição e o prompt aparecem na tela e são copiados para o Ctrl+V.")
-    print("    - Arraste a pílula para onde preferir.")
-    print("    - Clique no '✕' para encerrar.\n")
+    print("\n>>> Pílula Translúcida Ativa!")
+    print("    - Formato cápsula 100% arredondado e translúcido.")
+    print("    - Clique para falar, clique para encerrar.")
+    print("    - A transcrição e o prompt aparecem na tela e vão direto para o Ctrl+V.\n")
     root.mainloop()
 
 
