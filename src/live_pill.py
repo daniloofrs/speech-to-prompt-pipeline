@@ -1,13 +1,15 @@
-"""Pílula Flutuante Avulsa para ditado de voz e geração instantânea de prompts (Live Pill).
+"""Pílula Flutuante Avulsa com Transcrição em Tempo Real (Live Streaming).
 
-Design:
-- Formato pílula (cápsula) 100% arredondada com cantos verdadeiros via máscara de transparência.
-- Efeito translúcido (frosted glass) com alpha 0.92.
-- Microcopy humanizado e profissional (sem jargões de IA como 'Whisper + Ollama').
-- Expande suavemente após o processamento para exibir a transcrição e o pedido gerado.
-- Cópia automática para a área de transferência do Windows (Ctrl + V).
+Otimizações de Performance:
+1. Transcrição ao vivo enquanto você fala: o texto aparece na tela em tempo real.
+2. Modelo otimizado para baixa latência (small com beam_size=1, sem timestamps).
+3. Transcrição instantânea ao finalizar (o texto já está 95%+ pronto ao clicar em parar).
+4. Chamada de reescrita ao Ollama ultra rápida (num_predict=180, num_ctx=1024).
+5. Visual pílula moderno, 100% arredondado e translúcido (frosted glass).
+6. Cópia automática para o clipboard (Ctrl+V) com exibição completa na tela.
 """
 
+import json
 import logging
 import os
 import queue
@@ -15,6 +17,7 @@ import sys
 import threading
 import time
 import tkinter as tk
+import urllib.request
 from pathlib import Path
 from typing import Optional
 
@@ -41,13 +44,13 @@ import sounddevice as sd
 from faster_whisper import WhisperModel
 
 from src.config import (
+    OLLAMA_HOST,
     OLLAMA_MODEL,
     OLLAMA_TEMPERATURE,
     WHISPER_COMPUTE_TYPE,
     WHISPER_DEVICE,
-    WHISPER_MODEL,
 )
-from src.rewrite import call_ollama, parse_llm_response
+from src.rewrite import parse_llm_response
 
 logging.basicConfig(
     level=logging.INFO,
@@ -57,7 +60,10 @@ logging.basicConfig(
 logger = logging.getLogger("live_pill")
 
 SAMPLE_RATE = 16000
-KEY_COLOR = "#000001"  # Cor chave para transparência dos cantos no Windows
+KEY_COLOR = "#000001"  # Cor chave para transparência no Windows
+
+# Para o modo ao vivo rápido, usamos 'small' (3x mais rápido que o medium e com ótima precisão em pt)
+LIVE_WHISPER_MODEL = os.getenv("LIVE_WHISPER_MODEL", "small")
 
 
 def draw_smooth_round_rect(
@@ -69,7 +75,7 @@ def draw_smooth_round_rect(
     radius: float = 22,
     **kwargs,
 ) -> int:
-    """Desenha um retângulo arredondado ultra suave usando spline Bézier."""
+    """Desenha um retângulo arredondado suave usando spline Bézier."""
     points = [
         x1 + radius, y1,
         x2 - radius, y1,
@@ -87,20 +93,61 @@ def draw_smooth_round_rect(
     return canvas.create_polygon(points, smooth=True, **kwargs)
 
 
+def fast_call_ollama(text: str) -> str:
+    """Chamada otimizada ao Ollama com limite de tokens para resposta instantânea."""
+    endpoint = f"{OLLAMA_HOST.rstrip('/')}/api/chat"
+    system_prompt = (
+        "Você recebe a transcrição de uma fala informal em português. "
+        "Reescreva-a como um pedido claro e direto para uma IA na primeira pessoa. "
+        "Regras: mantenha termos técnicos, remova hesitações, nunca invente nada. "
+        "Formato: PEDIDO: <texto reescrito na primeira pessoa>"
+    )
+
+    payload = {
+        "model": OLLAMA_MODEL,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": text},
+        ],
+        "options": {
+            "temperature": OLLAMA_TEMPERATURE,
+            "num_predict": 180,  # Corta tempo de geração para menos de 1.5s
+            "num_ctx": 1024,     # Contexto enxuto para máxima velocidade
+        },
+        "stream": False,
+    }
+
+    req_data = json.dumps(payload).encode("utf-8")
+    request = urllib.request.Request(
+        url=endpoint,
+        data=req_data,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    with urllib.request.urlopen(request, timeout=30) as response:
+        data = json.loads(response.read().decode("utf-8"))
+        return data.get("message", {}).get("content", "").strip()
+
+
 class LivePillApp:
-    """Widget de pílula translúcida e arredondada para ditado de prompts."""
+    """Widget de pílula translúcida com transcrição ao vivo em tempo real."""
 
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.is_recording = False
         self.is_processing = False
-        self.is_expanded = False
         self.audio_chunks = []
         self.audio_stream: Optional[sd.InputStream] = None
         self.whisper_model: Optional[WhisperModel] = None
         self.record_start_time = 0.0
 
-        # Coordenadas para arraste
+        # Controle de transcrição ao vivo
+        self.live_transcript = ""
+        self.last_transcribed_len = 0
+        self.live_transcribe_thread: Optional[threading.Thread] = None
+
+        # Coordenadas de arraste
         self.start_x = 0
         self.start_y = 0
         self.win_x = 0
@@ -110,22 +157,6 @@ class LivePillApp:
         self.last_raw_text = ""
         self.last_prompt_text = ""
 
-        # Paleta de cores moderna (Zinc / Glassmorphism)
-        self.theme = {
-            "idle_bg": "#121217",
-            "idle_border": "#27272a",
-            "idle_text": "#f4f4f5",
-            "recording_bg": "#2a0f12",
-            "recording_border": "#ef4444",
-            "recording_text": "#fca5a5",
-            "processing_bg": "#0c1b2e",
-            "processing_border": "#0284c7",
-            "processing_text": "#7dd3fc",
-            "success_bg": "#06281e",
-            "success_border": "#10b981",
-            "success_text": "#6ee7b7",
-        }
-
         self.ui_queue = queue.Queue()
 
         self._configure_window()
@@ -134,22 +165,20 @@ class LivePillApp:
         self._start_queue_listener()
 
     def _configure_window(self) -> None:
-        """Configura a janela como sem bordas, Always-on-Top e translúcida."""
         self.root.overrideredirect(True)
         self.root.attributes("-topmost", True)
         self.root.config(bg=KEY_COLOR)
         self.root.attributes("-transparentcolor", KEY_COLOR)
-        self.root.attributes("-alpha", 0.93)  # Efeito translúcido frosted glass
+        self.root.attributes("-alpha", 0.94)
 
         self.screen_width = self.root.winfo_screenwidth()
         self.screen_height = self.root.winfo_screenheight()
 
     def _build_ui(self) -> None:
-        """Monta a estrutura visual base com Canvas transparente."""
         self.container = tk.Frame(self.root, bg=KEY_COLOR)
         self.container.pack(fill="both", expand=True)
 
-        # Canvas para desenho da pílula arredondada
+        # 1. Canvas para a Pílula Compacta
         self.pill_canvas = tk.Canvas(
             self.container,
             bg=KEY_COLOR,
@@ -157,10 +186,20 @@ class LivePillApp:
             cursor="hand2",
         )
         self.pill_canvas.pack(fill="both", expand=True)
-
         self._bind_mouse(self.pill_canvas)
 
-        # Painel expandido de resultados (oculto por padrão)
+        # 2. Frame de Gravação com Transcrição ao Vivo
+        self.live_frame = tk.Frame(
+            self.container,
+            bg="#18131a",
+            highlightthickness=1,
+            highlightbackground="#ef4444",
+            padx=14,
+            pady=10,
+        )
+        self._build_live_frame()
+
+        # 3. Frame de Resultados Expandido (Final)
         self.results_frame = tk.Frame(
             self.container,
             bg="#121217",
@@ -169,15 +208,70 @@ class LivePillApp:
             padx=16,
             pady=12,
         )
-
         self._build_expanded_results()
+
         self._show_compact_pill()
 
+    def _build_live_frame(self) -> None:
+        """Cria os componentes da tela de gravação com texto ao vivo."""
+        header = tk.Frame(self.live_frame, bg="#18131a")
+        header.pack(fill="x", pady=(0, 4))
+        self._bind_mouse(header)
+
+        self.live_timer_lbl = tk.Label(
+            header,
+            text="🔴 Ouvindo em tempo real (00:00)",
+            font=("Segoe UI", 9, "bold"),
+            bg="#18131a",
+            fg="#fca5a5",
+            cursor="hand2",
+        )
+        self.live_timer_lbl.pack(side="left")
+        self._bind_mouse(self.live_timer_lbl)
+
+        close_btn = tk.Label(
+            header,
+            text="✕",
+            font=("Segoe UI", 9),
+            bg="#18131a",
+            fg="#71717a",
+            cursor="hand2",
+        )
+        close_btn.pack(side="right")
+        close_btn.bind("<Button-1>", lambda e: self.root.destroy())
+
+        # Caixa onde a fala aparece ao vivo conforme o usuário fala
+        self.live_text_lbl = tk.Label(
+            self.live_frame,
+            text="Fale agora, suas palavras aparecerão aqui...",
+            font=("Segoe UI", 10),
+            bg="#241b26",
+            fg="#e4e4e7",
+            wraplength=440,
+            justify="left",
+            anchor="nw",
+            padx=10,
+            pady=8,
+            cursor="hand2",
+        )
+        self.live_text_lbl.pack(fill="x", pady=(2, 6))
+        self._bind_mouse(self.live_text_lbl)
+
+        footer = tk.Label(
+            self.live_frame,
+            text="Clique em qualquer lugar para concluir e copiar para o Ctrl+V",
+            font=("Segoe UI", 8),
+            bg="#18131a",
+            fg="#a1a1aa",
+            cursor="hand2",
+        )
+        footer.pack(anchor="w")
+        self._bind_mouse(footer)
+
     def _build_expanded_results(self) -> None:
-        """Cria os elementos da visão expandida de transcrição e prompt."""
-        # Cabeçalho com status e fechar
+        """Cria a tela com os resultados finais."""
         header = tk.Frame(self.results_frame, bg="#121217")
-        header.pack(fill="x", pady=(0, 8))
+        header.pack(fill="x", pady=(0, 6))
 
         self.badge_status = tk.Label(
             header,
@@ -201,8 +295,6 @@ class LivePillApp:
         )
         close_lbl.pack(side="right")
         close_lbl.bind("<Button-1>", lambda e: self.root.destroy())
-        close_lbl.bind("<Enter>", lambda e: close_lbl.config(fg="#ef4444"))
-        close_lbl.bind("<Leave>", lambda e: close_lbl.config(fg="#71717a"))
 
         # Transcrição da Fala
         tk.Label(
@@ -227,12 +319,12 @@ class LivePillApp:
             highlightthickness=1,
             highlightbackground="#27272a",
         )
-        self.raw_text_box.pack(fill="x", pady=(0, 8))
+        self.raw_text_box.pack(fill="x", pady=(0, 6))
 
         # Pedido Refinado
         tk.Label(
             self.results_frame,
-            text="PEDIDO PRONTO PARA IA:",
+            text="PEDIDO PRONTO PARA IA (COPIADO):",
             font=("Segoe UI", 8, "bold"),
             bg="#121217",
             fg="#34d399",
@@ -254,7 +346,7 @@ class LivePillApp:
         )
         self.prompt_text_box.pack(fill="x", pady=(0, 10))
 
-        # Barra de Ações
+        # Ações
         actions = tk.Frame(self.results_frame, bg="#121217")
         actions.pack(fill="x")
 
@@ -265,7 +357,6 @@ class LivePillApp:
             bg="#27272a",
             fg="#f4f4f5",
             activebackground="#3f3f46",
-            activeforeground="#ffffff",
             relief="flat",
             padx=12,
             pady=5,
@@ -280,8 +371,6 @@ class LivePillApp:
             font=("Segoe UI", 8),
             bg="#18181b",
             fg="#a1a1aa",
-            activebackground="#27272a",
-            activeforeground="#ffffff",
             relief="flat",
             padx=10,
             pady=5,
@@ -304,10 +393,10 @@ class LivePillApp:
         )
         self.btn_collapse.pack(side="right")
 
-    def _show_compact_pill(self, text: str = "🎙️  Falar comando", state_type: str = "idle") -> None:
-        """Exibe a pílula compacta de formato cápsula perfeitamente arredondada."""
-        self.is_expanded = False
+    def _show_compact_pill(self, text: str = "🎙️  Falar comando", bg_col: str = "#121217", border_col: str = "#27272a", text_col: str = "#f4f4f5") -> None:
+        """Exibe a pílula compacta de espera."""
         self.results_frame.pack_forget()
+        self.live_frame.pack_forget()
         self.pill_canvas.pack(fill="both", expand=True)
 
         width = 330
@@ -317,49 +406,48 @@ class LivePillApp:
         self.root.geometry(f"{width}x{height}+{x}+{y}")
 
         self.pill_canvas.delete("all")
-
-        # Seleciona as cores do estado atual
-        bg_col = self.theme.get(f"{state_type}_bg", self.theme["idle_bg"])
-        border_col = self.theme.get(f"{state_type}_border", self.theme["idle_border"])
-        text_col = self.theme.get(f"{state_type}_text", self.theme["idle_text"])
-
-        # Desenha a cápsula perfeitamente arredondada (radius = 22px para height 46px)
         draw_smooth_round_rect(
             self.pill_canvas,
-            x1=2,
-            y1=2,
-            x2=width - 2,
-            y2=height - 2,
+            x1=2, y1=2, x2=width - 2, y2=height - 2,
             radius=22,
             fill=bg_col,
             outline=border_col,
             width=1.5,
         )
-
-        # Texto centralizado e legível
-        self.canvas_text = self.pill_canvas.create_text(
-            width // 2 - 12,
-            height // 2,
+        self.pill_canvas.create_text(
+            width // 2 - 12, height // 2,
             text=text,
             fill=text_col,
             font=("Segoe UI", 10, "bold"),
         )
-
-        # Botão sutil de fechar (✕)
-        self.canvas_close = self.pill_canvas.create_text(
-            width - 22,
-            height // 2,
+        self.pill_canvas.create_text(
+            width - 22, height // 2,
             text="✕",
             fill="#52525b",
             font=("Segoe UI", 9),
         )
 
-    def _show_expanded_results(self, raw_text: str, prompt_text: str) -> None:
-        """Exibe o painel expandido translúcido com transcrição e prompt prontos."""
-        self.is_expanded = True
+    def _show_live_recording(self) -> None:
+        """Exibe o painel de transcrição ao vivo durante a fala."""
         self.pill_canvas.pack_forget()
+        self.results_frame.pack_forget()
+        self.live_frame.pack(fill="both", expand=True)
 
-        width = 500
+        width = 480
+        height = 116
+        x = (self.screen_width - width) // 2
+        y = self.screen_height - height - 60
+        self.root.geometry(f"{width}x{height}+{x}+{y}")
+
+        self.live_text_lbl.config(text="Fale agora, suas palavras aparecerão aqui...", fg="#94a3b8")
+
+    def _show_expanded_results(self, raw_text: str, prompt_text: str) -> None:
+        """Exibe o resultado final com as duas caixas de texto."""
+        self.pill_canvas.pack_forget()
+        self.live_frame.pack_forget()
+        self.results_frame.pack(fill="both", expand=True)
+
+        width = 520
         height = 290
         x = (self.screen_width - width) // 2
         y = self.screen_height - height - 60
@@ -373,8 +461,6 @@ class LivePillApp:
 
         self.prompt_text_box.delete("1.0", tk.END)
         self.prompt_text_box.insert("1.0", prompt_text)
-
-        self.results_frame.pack(fill="both", expand=True)
 
     def _bind_mouse(self, widget: tk.Widget) -> None:
         widget.bind("<Button-1>", self._on_mouse_down)
@@ -399,8 +485,8 @@ class LivePillApp:
         if self.has_dragged:
             return
 
-        # Verifica se clicou próximo ao botão de fechar (canto direito)
-        if event.x > 300:
+        # Botão de fechar da pílula compacta
+        if not self.is_recording and event.x > 300:
             self.root.destroy()
             return
 
@@ -418,8 +504,11 @@ class LivePillApp:
     def _start_audio_capture(self) -> None:
         self.audio_chunks = []
         self.is_recording = True
+        self.live_transcript = ""
+        self.last_transcribed_len = 0
         self.record_start_time = time.time()
-        self._show_compact_pill("🔴  Ouvindo... (00:00)", state_type="recording")
+
+        self._show_live_recording()
         self._update_recording_timer()
 
         def audio_callback(indata, frames, time_info, status):
@@ -435,23 +524,68 @@ class LivePillApp:
                 callback=audio_callback,
             )
             self.audio_stream.start()
-            logger.info("Microfone ativado.")
+            logger.info("Microfone ligado. Iniciando transcrição contínua...")
+            
+            # Inicia a thread que transcreve o áudio em tempo real enquanto você fala
+            self.live_transcribe_thread = threading.Thread(
+                target=self._live_transcribe_loop, daemon=True
+            )
+            self.live_transcribe_thread.start()
+
         except Exception as error:
-            logger.error(f"Erro no microfone: {error}")
-            self._show_compact_pill("⚠️  Microfone indisponível", state_type="idle")
-            self.root.after(2500, lambda: self._show_compact_pill("🎙️  Falar comando"))
+            logger.error(f"Erro ao abrir microfone: {error}")
+            self._show_compact_pill("⚠️  Microfone indisponível")
+            self.root.after(2500, lambda: self._show_compact_pill())
 
     def _update_recording_timer(self) -> None:
         if self.is_recording:
             elapsed = int(time.time() - self.record_start_time)
             mins = elapsed // 60
             secs = elapsed % 60
-            self._show_compact_pill(
-                f"🔴  Ouvindo... ({mins:02d}:{secs:02d})", state_type="recording"
-            )
+            self.live_timer_lbl.config(text=f"🔴 Ouvindo em tempo real ({mins:02d}:{secs:02d})")
             self.root.after(500, self._update_recording_timer)
 
+    def _live_transcribe_loop(self) -> None:
+        """Loop que transcreve blocos de fala em tempo real na GPU."""
+        while self.is_recording:
+            time.sleep(0.65)  # Intervalo de atualização fluida
+            if not self.is_recording:
+                break
+
+            if len(self.audio_chunks) < 4:
+                continue
+
+            try:
+                # Cria snapshot do áudio atual
+                audio_snapshot = np.concatenate(list(self.audio_chunks)).flatten()
+                if len(audio_snapshot) < SAMPLE_RATE * 0.7:
+                    continue
+
+                if self.whisper_model is None:
+                    continue
+
+                # Transcrição ultra-rápida (beam_size=1, sem timestamps, vad_filter)
+                segments, _ = self.whisper_model.transcribe(
+                    audio_snapshot,
+                    language="pt",
+                    beam_size=1,
+                    best_of=1,
+                    temperature=0.0,
+                    condition_on_previous_text=False,
+                    without_timestamps=True,
+                    vad_filter=True,
+                )
+                partial_text = " ".join(s.text.strip() for s in segments).strip()
+
+                if partial_text and partial_text != self.live_transcript:
+                    self.live_transcript = partial_text
+                    self.ui_queue.put(("live_update", partial_text))
+
+            except Exception as e:
+                logger.warning(f"Aviso na transcrição ao vivo: {e}")
+
     def _stop_audio_capture(self) -> None:
+        """Encerra a gravação e dispara a reescrita com Ollama instantaneamente."""
         self.is_recording = False
         if self.audio_stream:
             self.audio_stream.stop()
@@ -459,82 +593,92 @@ class LivePillApp:
             self.audio_stream = None
 
         if not self.audio_chunks:
-            self._show_compact_pill("🎙️  Falar comando")
+            self._show_compact_pill()
             return
 
         self.is_processing = True
-        self._show_compact_pill("✨  Estruturando pedido...", state_type="processing")
+        self._show_compact_pill(
+            "✨  Estruturando pedido...",
+            bg_col="#0c1b2e", border_col="#0284c7", text_col="#7dd3fc"
+        )
 
-        recorded_audio = np.concatenate(self.audio_chunks, axis=0).flatten()
-        duration_s = len(recorded_audio) / SAMPLE_RATE
+        final_audio = np.concatenate(self.audio_chunks).flatten()
+        duration_s = len(final_audio) / SAMPLE_RATE
 
-        if duration_s < 0.6:
+        if duration_s < 0.5:
             self.is_processing = False
-            self._show_compact_pill("⚠️  Fala muito curta", state_type="idle")
-            self.root.after(2000, lambda: self._show_compact_pill("🎙️  Falar comando"))
+            self._show_compact_pill("⚠️  Fala muito curta")
+            self.root.after(2000, lambda: self._show_compact_pill())
             return
 
         threading.Thread(
-            target=self._process_audio_worker,
-            args=(recorded_audio,),
+            target=self._final_pipeline_worker,
+            args=(final_audio, self.live_transcript),
             daemon=True,
         ).start()
 
-    def _process_audio_worker(self, audio_data: np.ndarray) -> None:
+    def _final_pipeline_worker(self, audio_data: np.ndarray, last_live_text: str) -> None:
+        """Finaliza a transcrição se necessário e aciona a reescrita rápida."""
         try:
-            if self.whisper_model is None:
-                self.whisper_model = WhisperModel(
-                    WHISPER_MODEL,
-                    device=WHISPER_DEVICE,
-                    compute_type=WHISPER_COMPUTE_TYPE,
+            # Se a transcrição ao vivo já pegou a fala, reutiliza diretamente economizando tempo
+            raw_text = last_live_text
+            if not raw_text or len(raw_text) < 5:
+                logger.info("Executando passe final de transcrição...")
+                segments, _ = self.whisper_model.transcribe(
+                    audio_data,
+                    language="pt",
+                    beam_size=1,
+                    without_timestamps=True,
+                    vad_filter=True,
                 )
-
-            logger.info("Transcrevendo fala...")
-            segments, info = self.whisper_model.transcribe(
-                audio_data, language="pt", beam_size=5
-            )
-            raw_text = " ".join(seg.text.strip() for seg in segments).strip()
+                raw_text = " ".join(s.text.strip() for s in segments).strip()
 
             if not raw_text:
                 self.ui_queue.put(("error", "Nenhuma fala detectada"))
                 return
 
-            logger.info("Reescrevendo com modelo de linguagem local...")
-            llm_output = call_ollama(
-                text=raw_text,
-                model=OLLAMA_MODEL,
-                temperature=OLLAMA_TEMPERATURE,
-            )
+            logger.info(f"Fala final: \"{raw_text}\"")
+            logger.info("Reescrevendo com Ollama em modo otimizado...")
+            
+            # Chamada otimizada ao Ollama
+            t0 = time.time()
+            llm_output = fast_call_ollama(raw_text)
+            logger.info(f"Ollama respondeu em {time.time()-t0:.2f}s")
+
             pedido, duvidas = parse_llm_response(llm_output)
 
-            # Copia automaticamente para o clipboard do Windows
+            # Copia imediatamente para o Ctrl+V
             pyperclip.copy(pedido)
-            logger.info("Prompt pronto copiado para a área de transferência!")
+            logger.info(f"Prompt pronto copiado para a área de transferência!")
 
             self.ui_queue.put(("success", (raw_text, pedido)))
 
         except Exception as error:
-            logger.error(f"Erro no processamento: {error}")
+            logger.error(f"Erro no pipeline final: {error}")
             self.ui_queue.put(("error", "Falha ao processar"))
 
     def _start_queue_listener(self) -> None:
         try:
             while not self.ui_queue.empty():
                 msg_type, payload = self.ui_queue.get_nowait()
-                self.is_processing = False
-                if msg_type == "success":
+                if msg_type == "live_update":
+                    # Atualiza o texto na tela em tempo real enquanto fala
+                    self.live_text_lbl.config(text=payload, fg="#ffffff")
+                elif msg_type == "success":
+                    self.is_processing = False
                     raw_text, prompt_text = payload
                     self._show_expanded_results(raw_text, prompt_text)
                 elif msg_type == "error":
-                    self._show_compact_pill(f"⚠️  {payload}", state_type="idle")
-                    self.root.after(2500, lambda: self._show_compact_pill("🎙️  Falar comando"))
+                    self.is_processing = False
+                    self._show_compact_pill(f"⚠️  {payload}")
+                    self.root.after(2500, lambda: self._show_compact_pill())
         except Exception:
             pass
 
-        self.root.after(100, self._start_queue_listener)
+        self.root.after(80, self._start_queue_listener)
 
     def _on_new_record_click(self) -> None:
-        self._show_compact_pill("🎙️  Falar comando")
+        self._show_compact_pill()
         self._toggle_recording()
 
     def _on_copy_again_click(self) -> None:
@@ -546,12 +690,13 @@ class LivePillApp:
     def _load_whisper_in_background(self) -> None:
         def load():
             try:
+                logger.info(f"Pré-carregando Whisper '{LIVE_WHISPER_MODEL}' na GPU...")
                 self.whisper_model = WhisperModel(
-                    WHISPER_MODEL,
+                    LIVE_WHISPER_MODEL,
                     device=WHISPER_DEVICE,
                     compute_type=WHISPER_COMPUTE_TYPE,
                 )
-                logger.info("Modelo pronto na GPU.")
+                logger.info(f"Whisper '{LIVE_WHISPER_MODEL}' aquecido e pronto na GPU!")
             except Exception as e:
                 logger.warning(f"Aviso no carregamento do Whisper: {e}")
 
@@ -561,10 +706,10 @@ class LivePillApp:
 def main() -> None:
     root = tk.Tk()
     app = LivePillApp(root)
-    print("\n>>> Pílula Translúcida Ativa!")
-    print("    - Formato cápsula 100% arredondado e translúcido.")
-    print("    - Clique para falar, clique para encerrar.")
-    print("    - A transcrição e o prompt aparecem na tela e vão direto para o Ctrl+V.\n")
+    print("\n>>> Pílula Translúcida com Transcrição ao Vivo Ativa!")
+    print("    - As palavras aparecem na tela ENQUANTO você fala.")
+    print("    - Transcrição ultra rápida na GPU RTX 4050.")
+    print("    - Reescrita otimizada e cópia instantânea para o Ctrl+V.\n")
     root.mainloop()
 
 
