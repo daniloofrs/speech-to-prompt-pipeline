@@ -44,6 +44,7 @@ import sounddevice as sd
 from faster_whisper import WhisperModel
 
 from src.config import (
+    LIVE_OLLAMA_MODEL,
     OLLAMA_HOST,
     OLLAMA_MODEL,
     OLLAMA_TEMPERATURE,
@@ -62,8 +63,9 @@ logger = logging.getLogger("live_pill")
 SAMPLE_RATE = 16000
 KEY_COLOR = "#000001"  # Cor chave para transparência no Windows
 
-# Para o modo ao vivo rápido, usamos 'small' (3x mais rápido que o medium e com ótima precisão em pt)
+# Modelos ultra-rápidos para interação desktop em tempo real
 LIVE_WHISPER_MODEL = os.getenv("LIVE_WHISPER_MODEL", "small")
+FAST_OLLAMA_MODEL = os.getenv("LIVE_OLLAMA_MODEL", LIVE_OLLAMA_MODEL)
 
 
 def draw_smooth_round_rect(
@@ -94,26 +96,30 @@ def draw_smooth_round_rect(
 
 
 def fast_call_ollama(text: str) -> str:
-    """Chamada otimizada ao Ollama com limite de tokens para resposta instantânea."""
+    """Chamada ultra-otimizada ao Ollama: keep_alive em VRAM e retorno imperativo direto."""
     endpoint = f"{OLLAMA_HOST.rstrip('/')}/api/chat"
     system_prompt = (
-        "Você recebe a transcrição de uma fala informal em português. "
-        "Reescreva-a como um pedido claro e direto para uma IA na primeira pessoa. "
-        "Regras: mantenha termos técnicos, remova hesitações, nunca invente nada. "
-        "Formato: PEDIDO: <texto reescrito na primeira pessoa>"
+        "Você é um especialista em Prompt Engineering. "
+        "Sua tarefa é transformar a transcrição de fala do usuário em um prompt direto, claro e profissional para uma IA.\n"
+        "Regras:\n"
+        "1. Retorne APENAS o comando imperativo refinado (ex: 'Crie uma função...', 'Escreva uma query...').\n"
+        "2. Seja direto e objetivo, sem enrolação.\n"
+        "3. Não inclua introduções, explicações, saudações, títulos, notas ou aspas."
     )
 
     payload = {
-        "model": OLLAMA_MODEL,
+        "model": FAST_OLLAMA_MODEL,
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": text},
         ],
         "options": {
-            "temperature": OLLAMA_TEMPERATURE,
-            "num_predict": 180,  # Corta tempo de geração para menos de 1.5s
-            "num_ctx": 1024,     # Contexto enxuto para máxima velocidade
+            "temperature": 0.0,
+            "num_predict": 60,   # Corta a geração logo após o comando direto
+            "num_ctx": 256,      # Contexto reduzido acelera consideravelmente o KV cache
+            "stop": ["\n\n", "Nota:", "Observação:", "Explicação:", "DÚVIDAS:"],
         },
+        "keep_alive": "60m",     # Mantém o modelo residente na VRAM da GPU sem descarregar
         "stream": False,
     }
 
@@ -127,7 +133,11 @@ def fast_call_ollama(text: str) -> str:
 
     with urllib.request.urlopen(request, timeout=30) as response:
         data = json.loads(response.read().decode("utf-8"))
-        return data.get("message", {}).get("content", "").strip()
+        raw_output = data.get("message", {}).get("content", "").strip()
+        for prefix in ["PEDIDO:", "Prompt:", "prompt:"]:
+            if raw_output.startswith(prefix):
+                raw_output = raw_output[len(prefix):].strip()
+        return raw_output
 
 
 class LivePillApp:
@@ -161,7 +171,7 @@ class LivePillApp:
 
         self._configure_window()
         self._build_ui()
-        self._load_whisper_in_background()
+        self._load_models_in_background()
         self._start_queue_listener()
 
     def _configure_window(self) -> None:
@@ -646,12 +656,13 @@ class LivePillApp:
             logger.info(f"Ollama respondeu em {time.time()-t0:.2f}s")
 
             pedido, duvidas = parse_llm_response(llm_output)
+            final_prompt = pedido if (pedido and pedido.lower() != "nenhuma") else llm_output
 
             # Copia imediatamente para o Ctrl+V
-            pyperclip.copy(pedido)
+            pyperclip.copy(final_prompt)
             logger.info(f"Prompt pronto copiado para a área de transferência!")
 
-            self.ui_queue.put(("success", (raw_text, pedido)))
+            self.ui_queue.put(("success", (raw_text, final_prompt)))
 
         except Exception as error:
             logger.error(f"Erro no pipeline final: {error}")
@@ -687,8 +698,9 @@ class LivePillApp:
             self.badge_status.config(text="✓ Recopiado com sucesso!")
             self.root.after(2000, lambda: self.badge_status.config(text="✓ Copiado para o Ctrl+V"))
 
-    def _load_whisper_in_background(self) -> None:
-        def load():
+    def _load_models_in_background(self) -> None:
+        """Carrega e aquece Whisper e Ollama na GPU em background para eliminar qualquer delay."""
+        def load_whisper():
             try:
                 logger.info(f"Pré-carregando Whisper '{LIVE_WHISPER_MODEL}' na GPU...")
                 self.whisper_model = WhisperModel(
@@ -700,16 +712,27 @@ class LivePillApp:
             except Exception as e:
                 logger.warning(f"Aviso no carregamento do Whisper: {e}")
 
-        threading.Thread(target=load, daemon=True).start()
+        def warmup_ollama():
+            try:
+                logger.info(f"Pré-aquecendo Ollama '{FAST_OLLAMA_MODEL}' na memória da GPU...")
+                t0 = time.time()
+                fast_call_ollama("teste de aquecimento")
+                logger.info(f"Ollama '{FAST_OLLAMA_MODEL}' aquecido e pronto na GPU em {time.time()-t0:.2f}s!")
+            except Exception as e:
+                logger.warning(f"Aviso no pré-aquecimento do Ollama: {e}")
+
+        threading.Thread(target=load_whisper, daemon=True).start()
+        threading.Thread(target=warmup_ollama, daemon=True).start()
 
 
 def main() -> None:
     root = tk.Tk()
     app = LivePillApp(root)
     print("\n>>> Pílula Translúcida com Transcrição ao Vivo Ativa!")
+    print(f"    - Modelo de Fala: Whisper '{LIVE_WHISPER_MODEL}' (GPU RTX 4050)")
+    print(f"    - Modelo de Reescrita: Ollama '{FAST_OLLAMA_MODEL}' (Ultra Rápido)")
     print("    - As palavras aparecem na tela ENQUANTO você fala.")
-    print("    - Transcrição ultra rápida na GPU RTX 4050.")
-    print("    - Reescrita otimizada e cópia instantânea para o Ctrl+V.\n")
+    print("    - Prompt refinado copiado instantaneamente para o Ctrl+V.\n")
     root.mainloop()
 
 
