@@ -84,8 +84,8 @@ class LivePillApp:
 
         self.ui_queue = queue.Queue()
 
-        self._configure_window()
         self._build_ui()
+        self._configure_window()
         self._load_whisper_in_background()
         self._start_queue_listener()
 
@@ -107,7 +107,8 @@ class LivePillApp:
         x = (self.screen_width - width) // 2
         y = self.screen_height - height - 65
         self.root.geometry(f"{width}x{height}+{x}+{y}")
-        self.results_frame.pack_forget()
+        if hasattr(self, "results_frame"):
+            self.results_frame.pack_forget()
 
     def _resize_to_expanded(self) -> None:
         """Expande a janela para exibir a transcricao e o prompt gerado (520x290)."""
