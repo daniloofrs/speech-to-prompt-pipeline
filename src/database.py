@@ -1,7 +1,7 @@
 """Modulo de conexao e operacoes no banco de dados PostgreSQL usando psycopg v3."""
 
 import logging
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 import psycopg
 from psycopg.rows import dict_row
 
@@ -28,7 +28,7 @@ def get_connection() -> psycopg.Connection:
 
 
 def init_db() -> None:
-    """Garante que as tabelas 'transcricoes' e 'prompts' existam no banco de dados."""
+    """Garante que todas as tabelas do pipeline existam no banco de dados."""
     create_tables_sql = """
     CREATE TABLE IF NOT EXISTS transcricoes (
         id SERIAL PRIMARY KEY,
@@ -50,12 +50,35 @@ def init_db() -> None:
     );
 
     CREATE INDEX IF NOT EXISTS idx_prompts_transcricao_id ON prompts(transcricao_id);
+
+    CREATE TABLE IF NOT EXISTS avaliacoes (
+        id SERIAL PRIMARY KEY,
+        prompt_id INTEGER NOT NULL REFERENCES prompts(id) ON DELETE CASCADE UNIQUE,
+        foi_editado BOOLEAN NOT NULL,
+        pedido_editado TEXT,
+        houve_alucinacao BOOLEAN NOT NULL,
+        detalhes_alucinacao TEXT,
+        avaliado_em TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_avaliacoes_prompt_id ON avaliacoes(prompt_id);
+
+    CREATE TABLE IF NOT EXISTS metricas_qualidade (
+        id SERIAL PRIMARY KEY,
+        total_avaliado INTEGER NOT NULL,
+        total_editados INTEGER NOT NULL,
+        total_alucinacoes INTEGER NOT NULL,
+        taxa_edicao_pct NUMERIC(5, 2) NOT NULL,
+        taxa_alucinacao_pct NUMERIC(5, 2) NOT NULL,
+        taxa_aceitacao_direta_pct NUMERIC(5, 2) NOT NULL,
+        calculado_em TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
     """
     try:
         with get_connection() as conn:
             with conn.cursor() as cursor:
                 cursor.execute(create_tables_sql)
-        logger.info("Tabelas 'transcricoes' e 'prompts' verificadas/criadas com sucesso.")
+        logger.info("Estrutura do banco de dados verificada/atualizada com sucesso.")
     except psycopg.OperationalError as error:
         logger.error("Nao foi possivel inicializar o banco de dados. O servico esta offline?")
         raise error
@@ -131,7 +154,6 @@ def insert_transcription(
                 record_id = row[0]
                 return record_id, True
             
-            # Se row is None, significa que ocorreu conflito (ON CONFLICT DO NOTHING)
             cursor.execute(
                 "SELECT id FROM transcricoes WHERE hash_audio = %s;",
                 (audio_hash,),
@@ -147,10 +169,7 @@ def insert_prompt(
     duvidas: str,
     model_name: str,
 ) -> int:
-    """Grava o pedido reescrito e as duvidas na tabela 'prompts'.
-    
-    Retorna o ID gerado para o prompt.
-    """
+    """Grava o pedido reescrito e as duvidas na tabela 'prompts'."""
     insert_sql = """
     INSERT INTO prompts (transcricao_id, pedido, duvidas, modelo)
     VALUES (%s, %s, %s, %s)
@@ -164,3 +183,142 @@ def insert_prompt(
             )
             row = cursor.fetchone()
             return row[0]
+
+
+def get_prompt_with_transcription(prompt_id: int) -> Optional[dict]:
+    """Retorna os dados completos do prompt e da transcricao correspondente."""
+    query = """
+    SELECT 
+        p.id AS prompt_id,
+        p.transcricao_id,
+        p.pedido,
+        p.duvidas,
+        p.modelo,
+        p.criado_em AS prompt_criado_em,
+        t.arquivo,
+        t.texto AS texto_cru,
+        t.duracao_s
+    FROM prompts p
+    JOIN transcricoes t ON t.id = p.transcricao_id
+    WHERE p.id = %s;
+    """
+    with get_connection() as conn:
+        with conn.cursor(row_factory=dict_row) as cursor:
+            cursor.execute(query, (prompt_id,))
+            return cursor.fetchone()
+
+
+def get_unreviewed_prompts() -> List[dict]:
+    """Retorna os prompts que ainda nao foram avaliados manualmente."""
+    query = """
+    SELECT 
+        p.id AS prompt_id,
+        p.transcricao_id,
+        p.pedido,
+        p.duvidas,
+        p.modelo,
+        t.arquivo,
+        t.texto AS texto_cru
+    FROM prompts p
+    JOIN transcricoes t ON t.id = p.transcricao_id
+    LEFT JOIN avaliacoes a ON a.prompt_id = p.id
+    WHERE a.id IS NULL
+    ORDER BY p.id ASC;
+    """
+    with get_connection() as conn:
+        with conn.cursor(row_factory=dict_row) as cursor:
+            cursor.execute(query)
+            return cursor.fetchall()
+
+
+def save_evaluation(
+    prompt_id: int,
+    foi_editado: bool,
+    pedido_editado: Optional[str],
+    houve_alucinacao: bool,
+    detalhes_alucinacao: Optional[str],
+) -> int:
+    """Salva a avaliacao humana de qualidade com suporte a reavaliacao idempotente."""
+    upsert_sql = """
+    INSERT INTO avaliacoes (prompt_id, foi_editado, pedido_editado, houve_alucinacao, detalhes_alucinacao)
+    VALUES (%s, %s, %s, %s, %s)
+    ON CONFLICT (prompt_id) DO UPDATE SET
+        foi_editado = EXCLUDED.foi_editado,
+        pedido_editado = EXCLUDED.pedido_editado,
+        houve_alucinacao = EXCLUDED.houve_alucinacao,
+        detalhes_alucinacao = EXCLUDED.detalhes_alucinacao,
+        avaliado_em = CURRENT_TIMESTAMP
+    RETURNING id;
+    """
+    with get_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                upsert_sql,
+                (
+                    prompt_id,
+                    foi_editado,
+                    pedido_editado,
+                    houve_alucinacao,
+                    detalhes_alucinacao,
+                ),
+            )
+            row = cursor.fetchone()
+            return row[0]
+
+
+def calculate_and_save_metrics() -> dict:
+    """Calcula as taxas de qualidade a partir de 'avaliacoes' e registra um snapshot em 'metricas_qualidade'."""
+    calc_sql = """
+    SELECT 
+        COUNT(*)::INTEGER AS total_avaliado,
+        COUNT(*) FILTER (WHERE foi_editado)::INTEGER AS total_editados,
+        COUNT(*) FILTER (WHERE houve_alucinacao)::INTEGER AS total_alucinacoes,
+        ROUND(COALESCE(COUNT(*) FILTER (WHERE foi_editado) * 100.0 / NULLIF(COUNT(*), 0), 0), 2) AS taxa_edicao_pct,
+        ROUND(COALESCE(COUNT(*) FILTER (WHERE houve_alucinacao) * 100.0 / NULLIF(COUNT(*), 0), 0), 2) AS taxa_alucinacao_pct,
+        ROUND(COALESCE(COUNT(*) FILTER (WHERE NOT foi_editado AND NOT houve_alucinacao) * 100.0 / NULLIF(COUNT(*), 0), 0), 2) AS taxa_aceitacao_direta_pct
+    FROM avaliacoes;
+    """
+    insert_sql = """
+    INSERT INTO metricas_qualidade (
+        total_avaliado,
+        total_editados,
+        total_alucinacoes,
+        taxa_edicao_pct,
+        taxa_alucinacao_pct,
+        taxa_aceitacao_direta_pct
+    )
+    VALUES (%s, %s, %s, %s, %s, %s)
+    RETURNING id, total_avaliado, total_editados, total_alucinacoes, taxa_edicao_pct, taxa_alucinacao_pct, taxa_aceitacao_direta_pct, calculado_em;
+    """
+    with get_connection() as conn:
+        with conn.cursor(row_factory=dict_row) as cursor:
+            cursor.execute(calc_sql)
+            stats = cursor.fetchone()
+            
+            cursor.execute(
+                insert_sql,
+                (
+                    stats["total_avaliado"],
+                    stats["total_editados"],
+                    stats["total_alucinacoes"],
+                    stats["taxa_edicao_pct"],
+                    stats["taxa_alucinacao_pct"],
+                    stats["taxa_aceitacao_direta_pct"],
+                ),
+            )
+            saved = cursor.fetchone()
+            return saved
+
+
+def get_latest_metrics() -> Optional[dict]:
+    """Retorna o snapshot mais recente de metricas calculadas."""
+    query = """
+    SELECT id, total_avaliado, total_editados, total_alucinacoes, taxa_edicao_pct, taxa_alucinacao_pct, taxa_aceitacao_direta_pct, calculado_em
+    FROM metricas_qualidade
+    ORDER BY id DESC
+    LIMIT 1;
+    """
+    with get_connection() as conn:
+        with conn.cursor(row_factory=dict_row) as cursor:
+            cursor.execute(query)
+            return cursor.fetchone()
