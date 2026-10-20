@@ -322,3 +322,61 @@ def get_latest_metrics() -> Optional[dict]:
         with conn.cursor(row_factory=dict_row) as cursor:
             cursor.execute(query)
             return cursor.fetchone()
+
+
+def get_dashboard_data() -> dict:
+    """Coleta e consolida os dados de todas as camadas do pipeline para o dashboard."""
+    with get_connection() as conn:
+        with conn.cursor(row_factory=dict_row) as cursor:
+            cursor.execute("SELECT * FROM metricas_qualidade ORDER BY id DESC LIMIT 1;")
+            latest_metrics = cursor.fetchone()
+
+            cursor.execute("""
+                SELECT 
+                    COUNT(*)::INTEGER AS total_audios,
+                    COALESCE(ROUND(SUM(duracao_s), 1), 0) AS total_segundos
+                FROM transcricoes;
+            """)
+            audio_stats = cursor.fetchone()
+
+            cursor.execute("SELECT COUNT(*)::INTEGER AS total_prompts FROM prompts;")
+            prompts_stats = cursor.fetchone()
+
+            cursor.execute("""
+                SELECT 
+                    t.id AS transcricao_id,
+                    t.arquivo,
+                    t.duracao_s,
+                    t.texto AS transcricao_crua,
+                    t.criado_em AS transcricao_criado_em,
+                    p.id AS prompt_id,
+                    p.pedido,
+                    p.duvidas,
+                    p.modelo,
+                    a.id AS avaliacao_id,
+                    a.foi_editado,
+                    a.pedido_editado,
+                    a.houve_alucinacao,
+                    a.detalhes_alucinacao
+                FROM transcricoes t
+                LEFT JOIN prompts p ON p.transcricao_id = t.id
+                LEFT JOIN avaliacoes a ON a.prompt_id = p.id
+                ORDER BY t.id DESC
+                LIMIT 20;
+            """)
+            recent_items = cursor.fetchall()
+
+            return {
+                "latest_metrics": latest_metrics or {
+                    "total_avaliado": 0,
+                    "total_editados": 0,
+                    "total_alucinacoes": 0,
+                    "taxa_edicao_pct": 0.0,
+                    "taxa_alucinacao_pct": 0.0,
+                    "taxa_aceitacao_direta_pct": 0.0,
+                    "calculado_em": "N/A",
+                },
+                "audio_stats": audio_stats,
+                "prompts_stats": prompts_stats,
+                "recent_items": recent_items,
+            }
