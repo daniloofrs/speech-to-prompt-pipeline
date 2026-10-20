@@ -28,8 +28,8 @@ def get_connection() -> psycopg.Connection:
 
 
 def init_db() -> None:
-    """Garante que a tabela 'transcricoes' exista no banco de dados."""
-    create_table_sql = """
+    """Garante que as tabelas 'transcricoes' e 'prompts' existam no banco de dados."""
+    create_tables_sql = """
     CREATE TABLE IF NOT EXISTS transcricoes (
         id SERIAL PRIMARY KEY,
         arquivo TEXT NOT NULL,
@@ -39,12 +39,23 @@ def init_db() -> None:
         duracao_s NUMERIC(8, 2) NOT NULL,
         criado_em TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE TABLE IF NOT EXISTS prompts (
+        id SERIAL PRIMARY KEY,
+        transcricao_id INTEGER NOT NULL REFERENCES transcricoes(id) ON DELETE CASCADE,
+        pedido TEXT NOT NULL,
+        duvidas TEXT NOT NULL,
+        modelo VARCHAR(50) NOT NULL,
+        criado_em TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_prompts_transcricao_id ON prompts(transcricao_id);
     """
     try:
         with get_connection() as conn:
             with conn.cursor() as cursor:
-                cursor.execute(create_table_sql)
-        logger.info("Tabela 'transcricoes' verificada/criada com sucesso.")
+                cursor.execute(create_tables_sql)
+        logger.info("Tabelas 'transcricoes' e 'prompts' verificadas/criadas com sucesso.")
     except psycopg.OperationalError as error:
         logger.error("Nao foi possivel inicializar o banco de dados. O servico esta offline?")
         raise error
@@ -60,6 +71,33 @@ def find_by_hash(audio_hash: str) -> Optional[dict]:
     with get_connection() as conn:
         with conn.cursor(row_factory=dict_row) as cursor:
             cursor.execute(query, (audio_hash,))
+            return cursor.fetchone()
+
+
+def get_transcription_by_id(transcription_id: int) -> Optional[dict]:
+    """Busca uma transcricao pelo seu ID primario."""
+    query = """
+    SELECT id, arquivo, hash_audio, texto, idioma, duracao_s, criado_em
+    FROM transcricoes
+    WHERE id = %s;
+    """
+    with get_connection() as conn:
+        with conn.cursor(row_factory=dict_row) as cursor:
+            cursor.execute(query, (transcription_id,))
+            return cursor.fetchone()
+
+
+def get_latest_transcription() -> Optional[dict]:
+    """Retorna a transcricao mais recente cadastrada no banco."""
+    query = """
+    SELECT id, arquivo, hash_audio, texto, idioma, duracao_s, criado_em
+    FROM transcricoes
+    ORDER BY id DESC
+    LIMIT 1;
+    """
+    with get_connection() as conn:
+        with conn.cursor(row_factory=dict_row) as cursor:
+            cursor.execute(query)
             return cursor.fetchone()
 
 
@@ -101,3 +139,28 @@ def insert_transcription(
             existing_row = cursor.fetchone()
             existing_id = existing_row[0] if existing_row else None
             return existing_id, False
+
+
+def insert_prompt(
+    transcription_id: int,
+    pedido: str,
+    duvidas: str,
+    model_name: str,
+) -> int:
+    """Grava o pedido reescrito e as duvidas na tabela 'prompts'.
+    
+    Retorna o ID gerado para o prompt.
+    """
+    insert_sql = """
+    INSERT INTO prompts (transcricao_id, pedido, duvidas, modelo)
+    VALUES (%s, %s, %s, %s)
+    RETURNING id;
+    """
+    with get_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                insert_sql,
+                (transcription_id, pedido, duvidas, model_name),
+            )
+            row = cursor.fetchone()
+            return row[0]

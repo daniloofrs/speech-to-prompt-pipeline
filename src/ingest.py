@@ -21,6 +21,13 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+# Garante saida em UTF-8 no terminal Windows para acentuacao correta
+if sys.platform == "win32":
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 # No Windows, adiciona os diretorios de DLLs da NVIDIA instaladas via pip ao PATH
 if sys.platform == "win32":
     site_packages = Path(sys.prefix) / "Lib" / "site-packages"
