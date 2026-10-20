@@ -13,11 +13,12 @@ logger = logging.getLogger(__name__)
 def get_connection() -> psycopg.Connection:
     """Abre e retorna uma conexao com o PostgreSQL.
     
-    Lança OperationalError caso o banco esteja inacessivel ou fora do ar.
+    Lanca OperationalError caso o banco esteja inacessivel ou fora do ar.
+    Usa connect_timeout=3 para falhar rapidamente caso o container esteja desligado.
     """
     connection_uri = get_db_connection_uri()
     try:
-        conn = psycopg.connect(connection_uri, autocommit=True)
+        conn = psycopg.connect(connection_uri, autocommit=True, connect_timeout=3)
         return conn
     except psycopg.OperationalError as error:
         logger.error(

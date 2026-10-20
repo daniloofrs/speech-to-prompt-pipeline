@@ -1,3 +1,6 @@
 faster-whisper>=1.0.0
+av>=11,<13
 psycopg[binary]>=3.1.18
 python-dotenv>=1.0.1
+nvidia-cublas-cu12; sys_platform == 'win32'
+nvidia-cudnn-cu12; sys_platform == 'win32'

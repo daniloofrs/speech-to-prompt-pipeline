@@ -4,16 +4,34 @@ Fluxo:
 1. Valida se o arquivo de audio existe.
 2. Calcula o hash SHA-256 do arquivo (chave unica de deduplicacao).
 3. Conecta ao PostgreSQL (garante idempotencia e trata erros se o banco estiver offline).
-4. Transcreve o audio em portugues usando faster-whisper.
+4. Transcreve o audio em portugues usando faster-whisper (com aceleracao CUDA na RTX 4050).
 5. Salva na tabela 'transcricoes' usando ON CONFLICT (hash_audio) DO NOTHING.
 """
 
 import argparse
 import hashlib
 import logging
+import os
 import sys
 from pathlib import Path
 from typing import Tuple
+
+# Garante que a raiz do projeto esteja no sys.path mesmo se executado diretamente como script
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+# No Windows, adiciona os diretorios de DLLs da NVIDIA instaladas via pip ao PATH
+if sys.platform == "win32":
+    site_packages = Path(sys.prefix) / "Lib" / "site-packages"
+    for nvidia_bin in site_packages.glob("nvidia/**/bin"):
+        if nvidia_bin.is_dir():
+            os.environ["PATH"] = str(nvidia_bin) + os.pathsep + os.environ["PATH"]
+            if hasattr(os, "add_dll_directory"):
+                try:
+                    os.add_dll_directory(str(nvidia_bin))
+                except OSError:
+                    pass
 
 import psycopg
 from faster_whisper import WhisperModel
@@ -74,20 +92,28 @@ def transcribe_audio(
     Retorna uma tupla contendo (texto_transcrito, idioma_detectado, duracao_segundos).
     """
     logger.info(f"Iniciando transcricao do arquivo: {audio_path.name}")
-    segments, info = model.transcribe(
-        str(audio_path),
-        language="pt",
-        beam_size=5,
-    )
+    try:
+        segments, info = model.transcribe(
+            str(audio_path),
+            language="pt",
+            beam_size=5,
+        )
 
-    # Itera sobre os segmentos e junta o texto transcrito
-    collected_text = []
-    for segment in segments:
-        collected_text.append(segment.text.strip())
+        collected_text = []
+        for segment in segments:
+            collected_text.append(segment.text.strip())
 
-    full_text = " ".join(collected_text).strip()
-    detected_lang = info.language or "pt"
-    duration = info.duration or 0.0
+        full_text = " ".join(collected_text).strip()
+        detected_lang = info.language or "pt"
+        duration = info.duration or 0.0
+
+    except Exception as exc:
+        # Se ocorrer erro em execucao na GPU (ex: cublas faltando), tenta fallback em CPU
+        if model.model.device == "cuda":
+            logger.warning(f"Erro durante execucao no CUDA ({exc}). Reexecutando transcricao em CPU...")
+            cpu_model = WhisperModel(WHISPER_MODEL, device="cpu", compute_type="int8")
+            return transcribe_audio(cpu_model, audio_path)
+        raise exc
 
     logger.info(
         f"Transcricao concluida: {len(full_text)} caracteres | Duracao: {duration:.2f}s | Idioma: {detected_lang}"
