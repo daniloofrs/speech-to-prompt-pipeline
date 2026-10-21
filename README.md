@@ -1,81 +1,119 @@
-# 🎙️ Speech-to-Prompt Pipeline
+# 🎙️ Speech-to-Prompt Pipeline & Dynamic Island
 
-> **Pipeline local de Engenharia de Dados e LLMOps:** Ingestão de áudios em português, transcrição com Whisper acelerado por GPU, reescrita estruturada de prompts via LLM local (Ollama) e governança com métricas de qualidade persistidas em PostgreSQL.
+<p align="center">
+  <img src="https://img.shields.io/badge/Python-3.12-blue?logo=python&logoColor=white" alt="Python 3.12" />
+  <img src="https://img.shields.io/badge/PostgreSQL-16%20Alpine-336791?logo=postgresql&logoColor=white" alt="PostgreSQL 16" />
+  <img src="https://img.shields.io/badge/Docker%20Compose-v2-2496ED?logo=docker&logoColor=white" alt="Docker Compose" />
+  <img src="https://img.shields.io/badge/GPU%20Acceleration-NVIDIA%20CUDA%2012-76B900?logo=nvidia&logoColor=white" alt="CUDA 12" />
+  <img src="https://img.shields.io/badge/ASR-Faster--Whisper%20Medium-orange" alt="Faster-Whisper" />
+  <img src="https://img.shields.io/badge/Local%20LLM-Ollama%20Qwen2.5-black?logo=ollama&logoColor=white" alt="Ollama" />
+  <img src="https://img.shields.io/badge/UI-Apple%20Fluid%20Design-grey?logo=apple&logoColor=white" alt="Apple Design" />
+</p>
 
----
-
-## 📌 Visão Geral e Objetivo
-
-Em fluxos de trabalho reais, instruções faladas por usuários costumam conter hesitações, termos informais, contradições e ambiguidades. Este projeto resolve esse problema implementando um pipeline robusto e local que:
-
-1. **Ingere áudio** de forma estritamente idempotente (garantindo que o mesmo áudio nunca seja reprocessado desnecessariamente).
-2. **Transcreve a fala** em português usando o modelo `faster-whisper` (medium) com aceleração CUDA nativa na GPU.
-3. **Reescreve o pedido** em primeira pessoa usando um LLM local (`qwen2.5:7b` via Ollama) com um system prompt restritivo anti-alucinação.
-4. **Registra métricas de qualidade (LLMOps)** através de avaliação humana (taxa de edição manual, taxa de alucinação e taxa de aceitação direta).
-5. **Disponibiliza um Dashboard analítico** em tempo real para monitoramento do fluxo e volumetria.
+> **Pipeline de Engenharia de Dados & LLMOps com Widget Desktop Estilo Apple Dynamic Island:** Ingestão de áudios em português, transcrição em tempo real com Whisper acelerado por GPU, reescrita estruturada de prompts via LLM local (Ollama), governança com métricas de qualidade persistidas em PostgreSQL e pílula desktop fluida com física de molas (Springs a 60 FPS) e cópia instantânea para o `Ctrl + V`.
 
 ---
 
-## 🏗️ Arquitetura do Pipeline
+## 📌 Visão Geral e Proposta de Valor
 
-```text
-               +-------------------------------------------------------------+
-               |                       MÁQUINA HOST                          |
-               |                                                             |
-               |  [ Áudio .wav / .mp3 ]                                      |
-               |            |                                                |
-               |            v (Streaming SHA-256)                            |
-               |     [ src/ingest.py ]                                       |
-               |            |                                                |
-               |      (Inference) ---> [ Faster-Whisper (CUDA float16) ]     |
-               |            |                     |                          |
-               |            +----------+          v                          |
-               |                       |      (Texto Cru)                    |
-               |                       v          |                          |
-               |             [ src/rewrite.py ] <--+                         |
-               |                       |                                     |
-               |                 (REST API) ---> [ Ollama (Qwen2.5:7b) ]     |
-               |                       |                                     |
-               |                       v                                     |
-               |             [ src/evaluate.py ] (Curadoria Humana)          |
-               |                       |                                     |
-               |                       v                                     |
-               |             [ src/dashboard.py ] (Web / CLI)                |
-               +-----------------------|-------------------------------------+
-                                       | (psycopg v3)
-                                       v
-                     +-----------------------------------+
-                     |       CONTAINER DOCKER            |
-                     |                                   |
-                     |         PostgreSQL 16             |
-                     |   ├── transcricoes (RAW)          |
-                     |   ├── prompts (REFINED)           |
-                     |   ├── avaliacoes (CURATION)       |
-                     |   └── metricas_qualidade (ANALYT.)|
-                     +-----------------------------------+
+Em fluxos de trabalho reais de desenvolvimento e análise, comandos falados por usuários contêm hesitações (*"tipo assim"*, *"ééé"*), ambiguidades, redundâncias e falta de contexto estruturado. 
+
+Este projeto aborda o problema sob duas perspectivas complementares de **Engenharia de Software e Dados**:
+
+1. **Pipeline de Governança em Lote (Batch Pipeline & LLMOps):**
+   - Ingestão estritamente idempotente baseada em streaming SHA-256.
+   - Transcrição precisa em português via `faster-whisper` (modelo `medium`) com tensores `float16` na GPU NVIDIA RTX 4050.
+   - Reescrita estruturada do pedido via LLM local (`qwen2.5:7b` ou `qwen2.5:3b`) em temperatura controlada (`0.1`), separando a instrução final imperativa de eventuais dúvidas técnicas.
+   - Camada de curadoria humana com métricas automatizadas no banco: **Taxa de Aceitação Direta**, **Taxa de Edição** e **Taxa de Alucinação**.
+   - Dashboard analítico web moderno com efeito translúcido (*Liquid Glass*) e modo terminal CLI.
+
+2. **Ferramenta de Produtividade Desktop (Apple Dynamic Island Live Pill):**
+   - Widget flutuante *Always-on-Top* sem bordas posicionado no inferior-meio da tela.
+   - **Streaming ao vivo:** as palavras aparecem na tela **enquanto você fala** (atualização contínua a cada ~550ms).
+   - **Física de Molas Apple (WWDC Fluid Interfaces):** transições fluidas a 60 FPS parametrizadas por *damping ratio* e *response*, resposta instantânea no *pointer-down* (compressão tátil), manipulação 1:1, *rubber-banding* nas bordas do monitor e projeção de momento (*flick velocity handoff*).
+   - **Áudio Reativo:** equalizador com 5 barras estilo *Apple Voice Memos* sincronizadas com a energia RMS do microfone.
+   - **Zero dependência de Docker:** opera 100% em memória RAM e GPU, entregando o prompt pronto no clipboard do Windows em ~2 segundos.
+
+---
+
+## 🏗️ Arquitetura do Sistema
+
+```mermaid
+flowchart TD
+    subgraph Entrada["🔊 Modos de Entrada"]
+        AudioFile["Arquivo de Áudio (.wav / .mp3)"]
+        LiveMic["Microfone em Tempo Real"]
+    end
+
+    subgraph BatchTrack["📊 Trilha 1: Batch Pipeline & Governança (Docker + PostgreSQL)"]
+        Ingest["src/ingest.py\n(Hash SHA-256 em blocos de 64KB)"]
+        WhisperBatch["Faster-Whisper Medium\n(CUDA float16)"]
+        RewriteBatch["src/rewrite.py\n(Ollama qwen2.5:7b)"]
+        Evaluate["src/evaluate.py\n(Curadoria Humana)"]
+        Dashboard["src/dashboard.py\n(Web Liquid Glass / CLI)"]
+    end
+
+    subgraph LiveTrack["🍏 Trilha 2: Desktop Dynamic Island (Apple Fluid UI)"]
+        LivePill["src/live_pill.py\n(Física de Molas 60 FPS)"]
+        NormAudio["Normalização de Ganho &\nRemoção de Offset DC"]
+        WhisperLive["Faster-Whisper Medium\n(Live Stream + Passe Final)"]
+        OllamaFast["Ollama Qwen2.5:3b\n(VRAM Warmup / num_predict: 60)"]
+        Clipboard["Área de Transferência\n(Ctrl + V Instantâneo)"]
+    end
+
+    subgraph Storage["🐘 Persistência Relacional (PostgreSQL 16)"]
+        T_Raw["transcricoes (Raw Layer)\nUNIQUE(hash_audio)"]
+        T_Ref["prompts (Refined Layer)\nFK -> transcricoes"]
+        T_Cur["avaliacoes (Curation Layer)"]
+        T_Met["metricas_qualidade (Analytics Layer)\nCOUNT(*) FILTER (...)"]
+    end
+
+    AudioFile --> Ingest
+    Ingest -->|Se inédito| WhisperBatch
+    WhisperBatch --> T_Raw
+    T_Raw --> RewriteBatch
+    RewriteBatch --> T_Ref
+    T_Ref --> Evaluate
+    Evaluate --> T_Cur
+    T_Cur --> T_Met
+    T_Met --> Dashboard
+
+    LiveMic --> LivePill
+    LivePill --> NormAudio
+    NormAudio --> WhisperLive
+    WhisperLive --> OllamaFast
+    OllamaFast --> Clipboard
 ```
 
 ---
 
-## 💡 Decisões Técnicas de Engenharia de Dados
+## 💡 Decisões Técnicas de Engenharia
 
 ### 1. Idempotência em Duas Camadas
-- **Nível de Aplicação:** O hash SHA-256 do arquivo de áudio é calculado lendo blocos de 64 KB (streaming), evitando carregar arquivos grandes inteiros na memória RAM. Se o hash já existir no banco, a execução do Whisper é cancelada na hora, poupando processamento de GPU.
-- **Nível de Banco:** A coluna `hash_audio VARCHAR(64) UNIQUE` possui uma restrição única. A inserção utiliza `INSERT INTO ... ON CONFLICT (hash_audio) DO NOTHING`, assegurando consistência atômica mesmo em cenários de concorrência.
+- **Nível de Aplicação:** O hash SHA-256 é calculado por streaming em blocos de 64 KB, impedindo sobrecarga de memória RAM mesmo com arquivos grandes. Caso o hash já exista no banco, a execução do Whisper é cancelada antes de tocar a GPU.
+- **Nível de Banco:** A coluna `hash_audio VARCHAR(64) UNIQUE` protege contra concorrência via `INSERT INTO ... ON CONFLICT (hash_audio) DO NOTHING`.
 
-### 2. Desacoplamento de Infraestrutura
-- O **PostgreSQL** roda isolado dentro de um container Docker Compose com volume persistente (`postgres_data`).
-- O **Whisper** e o **Ollama** rodam diretamente no sistema operacional host, aproveitando a aceleração direta da GPU NVIDIA GeForce RTX 4050 (6GB VRAM) sem a sobrecarga de containers GPU.
+### 2. Dimensionamento de VRAM na RTX 4050 (6 GB GDDR6)
+No modo interativo desktop em tempo real, a saturação de VRAM causa o fenômeno de *CUDA Memory Paging* (transferência de tensores pela PCIe para a memória RAM do sistema), aumentando o tempo de inferência do LLM de ~2s para mais de 9s.
+Para garantir estabilidade e fluidez simultâneas:
+- **Faster-Whisper Medium (`float16`):** ~1.5 GB de VRAM.
+- **Ollama Qwen2.5:3b (Q4_K_M):** ~1.9 GB de VRAM.
+- **Ambiente Windows DWM & Buffers:** ~0.8 GB de VRAM.
+- **Total ocupado:** ~4.2 GB de 6.0 GB (margem de segurança de ~1.8 GB sem swapping).
+- **Pré-aquecimento (*VRAM Warmup*):** Uma thread dedicada carrega o modelo do disco no boot com `keep_alive: 60m`, garantindo zero tempo de inicialização a frio (*cold start*).
 
-### 3. Modelagem Relacional Normalizada
-O esquema segue o conceito de camadas de dados:
-- **`transcricoes` (Raw Layer):** Armazena o arquivo de origem, hash SHA-256, duração em segundos e o texto cru gerado pelo Whisper.
-- **`prompts` (Refined Layer):** Contém o pedido reescrito, lista de dúvidas gerada e o modelo utilizado, com chave estrangeira (`FK`) apontando para a transcrição.
-- **`avaliacoes` (Curation Layer):** Registra a revisão manual humana indicando se o pedido foi alterado ou se houve alucinação.
-- **`metricas_qualidade` (Analytics Layer):** Armazena snapshots históricos das taxas de assertividade (Taxa de Edição Humana, Taxa de Alucinação e Taxa de Aceitação Direta), calculadas atomicamente no banco com `COUNT(*) FILTER (...)`.
+### 3. Física de Interfaces Fluídas (Apple Design Principles)
+O widget `src/live_pill.py` foi projetado com base nas diretrizes da WWDC (*Designing Fluid Interfaces*):
+- **Equação de Molas Reversíveis:** Utiliza parâmetros intuitivos de *damping ratio* ($\zeta$) e *response* ($\tau$), convertidos em rigidez $k = (2\pi / \tau)^2$ e amortecimento $c = 4\pi\zeta / \tau$. Isso permite redirecionar a animação em qualquer milissegundo sem solavancos.
+- **Resposta no *Pointer-Down*:** Feedback visual imediato ao encostar o dedo/cursor (`scale = 0.965`), sem aguardar a soltura do clique.
+- **Resistência de Borda (*Rubber-Banding*):**
+  $$\text{deslocamento} = \frac{\text{overshoot} \times \text{dimensao} \times 0.55}{\text{dimensao} + 0.55 \times |\text{overshoot}|}$$
+- **Projeção de Momento (*Flick Momentum*):** Ao arremessar o widget, a velocidade residual projeta o ponto de repouso antes do pouso elástico:
+  $$\Delta x = \frac{v_{\text{inicial}}}{1000} \times \frac{d}{1 - d} \quad (d = 0.992)$$
 
-### 4. Engenharia de Prompts e Baixa Temperatura
-O LLM é acionado com `temperature = 0.1` e um system prompt que proíbe terminantemente a inserção de tecnologias ou requisitos não mencionados na fala. Quando algo está ambíguo ou incompleto, o modelo é obrigado a listar o ponto na seção `DÚVIDAS:`.
+### 4. Calibração Fonética e Vocabulário Técnico
+Adicionamos o `TECH_INITIAL_PROMPT` para condicionar o decodificador do Whisper em português:
+> *"Transcrição em português brasileiro com pontuação precisa e vocabulário técnico: Python, SQL, PostgreSQL, Docker, FastAPI, React, JavaScript, TypeScript, Linux, Git, API REST, banco de dados, função, query, pipeline, script, frontend, backend."*
 
 ---
 
@@ -83,148 +121,160 @@ O LLM é acionado com `temperature = 0.1` e um system prompt que proíbe termina
 
 | Componente | Tecnologia | Finalidade |
 |---|---|---|
-| **Linguagem** | Python 3.12 | Linguagem principal do pipeline |
-| **Banco de Dados** | PostgreSQL 16 Alpine | Armazenamento relacional e métricas |
-| **Containerização** | Docker & Docker Compose | Infraestrutura do banco de dados isolada |
-| **Driver de Banco** | psycopg v3 (`psycopg[binary]`) | Driver moderno e performático para PostgreSQL |
-| **Transcrição** | faster-whisper (CTranslate2) | Transcrição de áudio acelerada por CUDA float16 |
-| **Aceleração GPU** | CUDA 12 (`nvidia-*-cu12`) | Execução na RTX 4050 sem necessidade de Toolkit |
-| **LLM Local** | Ollama (`qwen2.5:7b`) | Reescrita estruturada de linguagem natural |
-| **Configuração** | python-dotenv | Separação estrita de credenciais (.env) |
+| **Linguagem** | Python 3.12 | Base de todo o ecossistema |
+| **Banco Relacional** | PostgreSQL 16 Alpine | Armazenamento de dados brutos, refinados e métricas |
+| **Orquestração** | Docker Compose | Isolamento e persistência do banco (`postgres_data`) |
+| **Driver de Banco** | psycopg v3 (`psycopg[binary]`) | Conexão de alto desempenho com timeouts resilientes |
+| **Transcrição (ASR)** | faster-whisper (CTranslate2) | Reconhecimento de fala acelerado por CUDA FP16 |
+| **Aceleração GPU** | NVIDIA CUDA 12 Runtime | Execução na RTX 4050 sem necessidade de Toolkit |
+| **LLM Local** | Ollama (`qwen2.5:7b` e `qwen2.5:3b`) | Reescrita estruturada com contexto restritivo |
+| **Áudio em Memória** | SoundDevice & NumPy | Captura e normalização de microfone em 16 kHz mono |
+| **Área de Transferência**| Pyperclip | Injeção transparente no clipboard do SO (`Ctrl + V`) |
+| **Interface Desktop** | Tkinter Canvas & Apple HIG | Cápsula arredondada com renderização matemática e molas |
 
 ---
 
-## 🚀 Como Executar o Projeto
+## 🚀 Instalação e Configuração
 
 ### 1. Pré-requisitos
-- **Docker Desktop** instalado e em execução.
-- **Python 3.11+** instalado.
-- **Ollama** instalado na máquina. Baixe o modelo executando:
+- **Windows 10/11** ou **Linux**.
+- **Python 3.11+** (recomendado 3.12).
+- **Docker Desktop** ativo.
+- **Ollama** instalado. Baixe os modelos recomendados:
   ```bash
+  ollama pull qwen2.5:3b
   ollama pull qwen2.5:7b
   ```
 
-### 2. Configurar o Ambiente Local
-Clone o repositório e crie o ambiente virtual:
+### 2. Configurar o Ambiente Virtual
 ```powershell
-# Clone o projeto
+# Clonar o repositório
 git clone https://github.com/daniloofrs/speech-to-prompt-pipeline.git
 cd speech-to-prompt-pipeline
 
-# Crie e ative o ambiente virtual
+# Criar e ativar o ambiente virtual
 python -m venv venv
 .\venv\Scripts\Activate.ps1
 
-# Instale as dependências
+# Instalar dependências
 pip install -r requirements.txt
 ```
 
-Crie o arquivo `.env` baseado no modelo (já vem pré-configurado com os valores padrão):
+### 3. Configurar Variáveis de Ambiente
+Copie o template `.env.example` para `.env`:
 ```powershell
 cp .env.example .env
 ```
+*(O arquivo já vem configurado com as portas locais, usuário padrão e modelo `medium` do Whisper).*
 
-### 3. Subir o Banco de Dados
+### 4. Inicializar o Banco de Dados
 ```powershell
 docker compose up -d
 ```
-*(Confirme a inicialização saudável com `docker compose ps`)*
+As migrações SQL na pasta `sql/` são executadas automaticamente no primeiro boot do container:
+- `01_init.sql` (Tabela `transcricoes`)
+- `02_prompts.sql` (Tabela `prompts`)
+- `03_avaliacoes.sql` (Tabelas `avaliacoes` e `metricas_qualidade`)
 
 ---
 
-## 📋 Executando as Etapas do Pipeline
+## 📋 Como Usar
 
-### Etapa 1: Ingestão de Áudio
-Coloque seu arquivo de áudio na pasta `data/samples/` e execute:
+### Modo 1: Dynamic Island Desktop (Uso Rápido no Dia a Dia)
+Para ditar comandos de programação enquanto você navega ou desenvolve e colá-los direto no seu editor ou chat de IA:
+
 ```powershell
-python src/ingest.py data/samples/seu_audio.wav
+.\venv\Scripts\python src/live_pill.py
 ```
-- **Teste de Idempotência:** Execute o mesmo comando uma segunda vez. O pipeline detectará o hash SHA-256 e impedirá a duplicação sem gastar processamento de GPU.
 
-### Etapa 2: Reescrita com LLM
-Transforme a transcrição em um pedido claro e direto para IA:
+- **Aparência:** Uma pílula preta translúcida surge no inferior-meio da tela.
+- **1º Clique:** Comece a falar. Veja as ondas de voz reagirem e suas palavras serem transcritas em tempo real.
+- **2º Clique:** O áudio é finalizado, normalizado, reescrito pelo Ollama em ~2s e **copiado automaticamente para seu `Ctrl + V`**.
+- **Arrastável:** Clique e arraste para qualquer lugar da tela com inércia física real.
+- **Independente:** Não exige Docker nem PostgreSQL.
+
+---
+
+### Modo 2: Pipeline em Lote (Engenharia de Dados & Auditoria)
+
+#### Passo 1: Ingestão de Áudio
+Coloque o arquivo de áudio na pasta `data/samples/` e execute:
 ```powershell
-# Processa a transcrição mais recente
+python src/ingest.py data/samples/teste.wav
+```
+> [!NOTE]
+> Se você rodar o mesmo comando novamente, o pipeline detectará o hash SHA-256 e interromperá o processamento, demonstrando a **idempotência estrita**.
+
+#### Passo 2: Reescrita Estruturada com LLM
+Transforme a transcrição armazenada no PostgreSQL em um pedido refinado para IA:
+```powershell
+# Processa o último áudio ingerido
 python src/rewrite.py
 
-# Ou especifique o ID de uma transcrição
+# Ou especifique um ID específico
 python src/rewrite.py --id 1
 ```
-*(O terminal exibirá a comparação da fala crua e do pedido reescrito lado a lado)*
 
-### Etapa 3: Avaliação de Qualidade
-Realize a auditoria humana da qualidade da resposta:
+#### Passo 3: Avaliação de Qualidade (LLMOps Curation)
+Abra a CLI interativa para auditar o pedido e atualizar as métricas de alucinação e edição humana:
 ```powershell
-# Modo interativo (pergunta no terminal)
 python src/evaluate.py
-
-# Apenas visualizar o painel atual de métricas
+```
+Para consultar o sumário analítico no terminal:
+```powershell
 python src/evaluate.py --summary
 ```
 
-### Etapa 4: Dashboard de Monitoramento
-Abra a interface web do pipeline:
+#### Passo 4: Dashboard Analítico Web
+Inicie o servidor de telemetria nativo com interface *Liquid Glass*:
 ```powershell
 python src/dashboard.py --open
 ```
-- Acesse no navegador: **`http://localhost:8080`**
-- Ou visualize diretamente no terminal: `python src/dashboard.py --cli`
+- Acesse em: `http://localhost:8080`
+- Modo terminal puro: `python src/dashboard.py --cli`
 
 ---
 
-### 🎙️ Bônus: Pílula Flutuante Avulsa (Live Speech-to-Prompt)
-Quer ditar um prompt por voz enquanto programa ou navega e receber o texto refinado direto no seu `Ctrl + V`?
-```powershell
-python src/live_pill.py
-```
-- Uma **pílula discreta e flutuante** aparecerá no canto da tela (*Always-on-Top* e arrastável).
-- **1º Clique:** Começa a capturar seu microfone (`🔴 Ouvindo...`).
-- **2º Clique:** O áudio é transcrito em memória pela GPU e reescrito pelo Ollama.
-- **Resultado:** A pílula muda para verde (`✓ Copiado!`) e o prompt pronto entra automaticamente na sua área de transferência do Windows — basta dar `Ctrl + V` onde estiver.
-- **100% Avulso:** Funciona em memória RAM sem precisar do Docker ou banco de dados.
-
----
-
-## 📁 Estrutura de Pastas
+## 📁 Estrutura do Repositório
 
 ```text
 speech-to-prompt-pipeline/
 ├── data/
-│   └── samples/             # Pasta de amostras de áudio locais (.wav, .mp3)
+│   └── samples/             # Amostras de teste locais (.wav, .mp3)
 ├── sql/
-│   ├── 01_init.sql          # DDL da tabela 'transcricoes' (Raw Layer)
-│   ├── 02_prompts.sql       # DDL da tabela 'prompts' (Refined Layer)
-│   └── 03_avaliacoes.sql    # DDL de 'avaliacoes' e 'metricas_qualidade'
+│   ├── 01_init.sql          # Camada Raw: transcricoes com UNIQUE(hash_audio)
+│   ├── 02_prompts.sql       # Camada Refined: prompts com FK para transcricoes
+│   └── 03_avaliacoes.sql    # Camada Curation/Analytics: avaliações e métricas
 ├── src/
 │   ├── __init__.py
-│   ├── config.py            # Centraliza variáveis do .env e conexões
-│   ├── database.py          # Camada de acesso a dados (psycopg v3)
-│   ├── ingest.py            # Etapa 1: Ingestão, hash e Whisper GPU
-│   ├── rewrite.py           # Etapa 2: Chamada ao Ollama e formatação
-│   ├── evaluate.py          # Etapa 3: Curadoria humana e cálculo de taxas
-│   ├── dashboard.py         # Etapa 4: Interface web e CLI de monitoramento
-│   └── live_pill.py         # Pílula flutuante avulsa para ditado em tempo real
-├── .env.example             # Template seguro de credenciais
-├── .gitignore               # Ignora .env, venv/, caches e áudios locais
-├── docker-compose.yml       # Orquestração do container PostgreSQL
-├── requirements.txt         # Dependências do projeto
-└── README.md                # Documentação técnica do projeto
+│   ├── config.py            # Centralizador de variáveis de ambiente (.env)
+│   ├── database.py          # Camada de persistência (psycopg v3 com timeouts rápidos)
+│   ├── ingest.py            # Ingestão idempotente, SHA-256 streaming e Faster-Whisper
+│   ├── rewrite.py           # Integração com Ollama (Qwen2.5) e prompt engineering
+│   ├── evaluate.py          # Auditoria humana e cálculo de taxas analíticas
+│   ├── dashboard.py         # Dashboard web com Apple Liquid Glass e CLI
+│   └── live_pill.py         # Pílula flutuante estilo Apple Dynamic Island (Springs 60 FPS)
+├── .env.example             # Template de configuração
+├── .gitignore               # Protege dados confidenciais e caches locais
+├── docker-compose.yml       # Orquestração do PostgreSQL 16 Alpine
+├── requirements.txt         # Dependências com pin estrito de versões
+└── README.md                # Documentação técnica completa
 ```
 
 ---
 
-## 📊 Consultas SQL de Auditoria
+## 📊 Consultas SQL Úteis
 
-Para inspecionar os dados diretamente dentro do container do PostgreSQL:
+Para inspecionar os dados diretamente dentro do container PostgreSQL:
 
 ```bash
-# Consultar todas as transcrições
+# Verificar transcrições e hash idempotente
 docker exec -it speech_pipeline_postgres psql -U pipeline_user -d speech_pipeline -c "SELECT id, arquivo, hash_audio, duracao_s, criado_em FROM transcricoes;"
 
-# Consultar pedidos gerados pelo LLM
+# Visualizar prompts reescritos pelo Ollama
 docker exec -it speech_pipeline_postgres psql -U pipeline_user -d speech_pipeline -c "SELECT id, transcricao_id, pedido, modelo FROM prompts;"
 
-# Consultar o histórico de métricas de qualidade (LLMOps)
+# Consultar métricas históricas de assertividade
 docker exec -it speech_pipeline_postgres psql -U pipeline_user -d speech_pipeline -c "SELECT total_avaliado, taxa_aceitacao_direta_pct, taxa_edicao_pct, taxa_alucinacao_pct, calculado_em FROM metricas_qualidade;"
 ```
 
@@ -232,5 +282,5 @@ docker exec -it speech_pipeline_postgres psql -U pipeline_user -d speech_pipelin
 
 ## 👤 Autor
 
-Desenvolvido por **Danilo Fernandes** como projeto de portfólio para estágio em **Engenharia de Dados**.
+Desenvolvido por **Danilo Fernandes** como projeto de portfólio prático de **Engenharia de Dados e LLMOps**.
 - GitHub: [@daniloofrs](https://github.com/daniloofrs)
