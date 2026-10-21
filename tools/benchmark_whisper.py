@@ -7,6 +7,14 @@ import time
 import urllib.request
 import wave
 from pathlib import Path
+
+# Se executado no Python global (sem ativar o venv), reinicia automaticamente usando o venv do projeto
+_project_root = Path(__file__).resolve().parent.parent
+_venv_python = _project_root / "venv" / "Scripts" / "python.exe"
+if _venv_python.exists() and Path(sys.executable).resolve() != _venv_python.resolve():
+    import subprocess
+    sys.exit(subprocess.call([str(_venv_python)] + sys.argv))
+
 from faster_whisper import WhisperModel
 
 # Injeta DLLs da NVIDIA no PATH no Windows
