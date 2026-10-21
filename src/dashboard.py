@@ -281,17 +281,108 @@ def render_html_dashboard(data: dict) -> str:
             letter-spacing: 0.01em;
         }}
         @media (prefers-reduced-motion: reduce) {{
-            *, .card, .tag {{
+            *, .card, .tag, .liquid-island {{
                 transition: opacity 200ms ease !important;
                 transform: none !important;
             }}
         }}
         @media (prefers-reduced-transparency: reduce) {{
-            header, .card, .table-container {{
+            header, .card, .table-container, .liquid-island {{
                 background: #1c1c1e !important;
                 backdrop-filter: none !important;
                 -webkit-backdrop-filter: none !important;
             }}
+        }}
+
+        /* --- Liquid Glass Refraction Shader (Shu Ding inspired) --- */
+        .liquid-island {{
+            position: fixed;
+            top: 24px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 1000;
+            width: 440px;
+            max-width: calc(100vw - 32px);
+            padding: 10px 18px;
+            border-radius: 9999px;
+            cursor: grab;
+            user-select: none;
+            touch-action: none;
+            background: rgba(18, 18, 22, 0.48);
+            backdrop-filter: url(#liquid-glass-filter) blur(0.25px) contrast(1.15) brightness(1.04) saturate(1.18);
+            -webkit-backdrop-filter: url(#liquid-glass-filter) blur(0.25px) contrast(1.15) brightness(1.04) saturate(1.18);
+            border: 1px solid rgba(255, 255, 255, 0.16);
+            border-top: 1px solid rgba(255, 255, 255, 0.45);
+            box-shadow: 0 20px 48px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255, 255, 255, 0.08), inset 0 1px 2px rgba(255, 255, 255, 0.4);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            transition: box-shadow 150ms ease, border-color 150ms ease, width 250ms cubic-bezier(0.16, 1, 0.3, 1);
+        }}
+        .liquid-island:active {{
+            cursor: grabbing;
+            box-shadow: 0 28px 64px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.22);
+        }}
+        .liquid-island.no-svg {{
+            backdrop-filter: blur(24px) saturate(180%) !important;
+            -webkit-backdrop-filter: blur(24px) saturate(180%) !important;
+        }}
+        .liquid-island.expanded {{
+            width: 580px;
+            border-radius: 28px;
+            padding: 16px 22px;
+        }}
+        .island-brand {{
+            display: flex;
+            align-items: center;
+            gap: 9px;
+            color: #f5f5f7;
+            font-size: 0.82rem;
+            font-weight: 600;
+            letter-spacing: -0.01em;
+            pointer-events: none;
+        }}
+        .island-dot {{
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #30d158;
+            box-shadow: 0 0 10px #30d158;
+            animation: island-pulse 2s infinite ease-in-out;
+        }}
+        @keyframes island-pulse {{
+            0%, 100% {{ opacity: 1; transform: scale(1); }}
+            50% {{ opacity: 0.4; transform: scale(0.8); }}
+        }}
+        .island-controls {{
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }}
+        .island-btn {{
+            background: rgba(255, 255, 255, 0.12);
+            border: 1px solid rgba(255, 255, 255, 0.18);
+            border-top: 1px solid rgba(255, 255, 255, 0.35);
+            color: #f5f5f7;
+            border-radius: 999px;
+            padding: 5px 12px;
+            font-size: 0.74rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 150ms ease;
+        }}
+        .island-btn:hover {{
+            background: rgba(255, 255, 255, 0.22);
+        }}
+        .island-btn:active {{
+            transform: scale(0.95);
+        }}
+        .island-btn.active {{
+            background: #0a84ff;
+            border-color: #0a84ff;
+            color: #ffffff;
+            box-shadow: 0 0 12px rgba(10, 132, 255, 0.4);
         }}
     </style>
 </head>
@@ -359,6 +450,206 @@ def render_html_dashboard(data: dict) -> str:
             Speech-to-Prompt Pipeline &bull; Portfólio de Engenharia de Dados &bull; Danilo Fernandes
         </footer>
     </div>
+
+    <!-- Filtro SVG com Displacement Map baseado no algoritmo de Liquid Glass (Shu Ding) -->
+    <svg id="liquid-glass-svg" style="position: absolute; width: 0; height: 0; pointer-events: none; overflow: hidden;" aria-hidden="true">
+        <defs>
+            <filter id="liquid-glass-filter" filterUnits="userSpaceOnUse" x="0" y="0" width="100%" height="100%" color-interpolation-filters="sRGB">
+                <feImage id="liquid-fe-image" href="" result="displacementMap" preserveAspectRatio="none" />
+                <feDisplacementMap id="liquid-fe-disp" in="SourceGraphic" in2="displacementMap" xChannelSelector="R" yChannelSelector="G" scale="32" result="displaced" />
+            </filter>
+        </defs>
+    </svg>
+
+    <!-- Pílula Flutuante Interativa Liquid Glass -->
+    <div class="liquid-island" id="liquidIsland" title="Arraste livremente pela tela para ver a refração física dos dados">
+        <div class="island-brand">
+            <span class="island-dot"></span>
+            <span>Liquid Glass (SVG Lens)</span>
+        </div>
+        <div class="island-controls">
+            <button type="button" class="island-btn active" id="toggleRefractBtn" title="Alternar entre Refração Óptica SVG e Blur Padrão">Refração: ON</button>
+            <button type="button" class="island-btn" id="resizeIslandBtn" title="Alternar tamanho da lente">Expandir</button>
+        </div>
+    </div>
+
+    <script>
+        (function() {{
+            // Algoritmo matematico de Signed Distance Field (SDF) para retangulo arredondado (Shu Ding)
+            function roundedRectSDF(x, y, w, h, r) {{
+                const qx = Math.abs(x) - w + r;
+                const qy = Math.abs(y) - h + r;
+                return Math.min(Math.max(qx, qy), 0) + Math.hypot(Math.max(qx, 0), Math.max(qy, 0)) - r;
+            }}
+
+            // Geracao do mapa de deslocamento optico em Canvas 2D
+            function createDisplacementMap(width, height, radius, bevel) {{
+                const canvas = document.createElement('canvas');
+                canvas.width = Math.max(1, width);
+                canvas.height = Math.max(1, height);
+                const ctx = canvas.getContext('2d');
+                const imgData = ctx.createImageData(canvas.width, canvas.height);
+                const data = imgData.data;
+
+                const halfW = canvas.width / 2;
+                const halfH = canvas.height / 2;
+                const r = Math.min(radius, halfW, halfH);
+                const b = Math.max(4, Math.min(bevel, halfH * 0.9));
+
+                for (let y = 0; y < canvas.height; y++) {{
+                    for (let x = 0; x < canvas.width; x++) {{
+                        const idx = (y * canvas.width + x) * 4;
+                        const px = x - halfW;
+                        const py = y - halfH;
+                        const dist = roundedRectSDF(px, py, halfW, halfH, r);
+
+                        if (dist > 0) {{
+                            // Fora do retangulo arredondado - sem deslocamento e transparente
+                            data[idx] = 128;
+                            data[idx + 1] = 128;
+                            data[idx + 2] = 128;
+                            data[idx + 3] = 0;
+                        }} else if (dist >= -b) {{
+                            // Faixa de curvatura da borda (borda refrativa de vidro)
+                            const dx = roundedRectSDF(px + 1, py, halfW, halfH, r) - roundedRectSDF(px - 1, py, halfW, halfH, r);
+                            const dy = roundedRectSDF(px, py + 1, halfW, halfH, r) - roundedRectSDF(px, py - 1, halfW, halfH, r);
+                            const len = Math.hypot(dx, dy) || 1;
+                            const nx = dx / len;
+                            const ny = dy / len;
+
+                            // Perfil senoidal da curvatura optica da lente
+                            const depth = (dist + b) / b; // 0 no interior, 1 na extremidade
+                            const factor = Math.sin(depth * Math.PI * 0.5);
+
+                            // Codifica nos canais R (deslocamento X) e G (deslocamento Y), centralizado em 128 (0 offset)
+                            data[idx] = Math.round(128 + nx * factor * 115);
+                            data[idx + 1] = Math.round(128 + ny * factor * 115);
+                            data[idx + 2] = 128;
+                            data[idx + 3] = 255;
+                        }} else {{
+                            // Centro plano da lente - passagem sem distorcao
+                            data[idx] = 128;
+                            data[idx + 1] = 128;
+                            data[idx + 2] = 128;
+                            data[idx + 3] = 255;
+                        }}
+                    }}
+                }}
+
+                ctx.putImageData(imgData, 0, 0);
+                return canvas.toDataURL();
+            }}
+
+            const island = document.getElementById('liquidIsland');
+            const filter = document.getElementById('liquid-glass-filter');
+            const feImage = document.getElementById('liquid-fe-image');
+            const feDisp = document.getElementById('liquid-fe-disp');
+            const toggleBtn = document.getElementById('toggleRefractBtn');
+            const resizeBtn = document.getElementById('resizeIslandBtn');
+
+            function updateShader() {{
+                if (!island || !feImage || !feDisp || !filter) return;
+                const rect = island.getBoundingClientRect();
+                const w = Math.round(rect.width);
+                const h = Math.round(rect.height);
+                const isExp = island.classList.contains('expanded');
+                const radius = isExp ? 28 : h / 2;
+                const bevel = isExp ? 24 : Math.min(22, h * 0.45);
+
+                const dataUrl = createDisplacementMap(w, h, radius, bevel);
+
+                filter.setAttribute('x', '0');
+                filter.setAttribute('y', '0');
+                filter.setAttribute('width', w + 'px');
+                filter.setAttribute('height', h + 'px');
+
+                feImage.setAttribute('width', w + 'px');
+                feImage.setAttribute('height', h + 'px');
+                feImage.setAttribute('href', dataUrl);
+
+                feDisp.setAttribute('scale', isExp ? '40' : '32');
+            }}
+
+            // Alterna entre refracao SVG real e backdrop-filter blur generico
+            if (toggleBtn) {{
+                toggleBtn.addEventListener('click', (e) => {{
+                    e.stopPropagation();
+                    const isNoSvg = island.classList.toggle('no-svg');
+                    toggleBtn.classList.toggle('active', !isNoSvg);
+                    toggleBtn.textContent = isNoSvg ? 'Refração: OFF' : 'Refração: ON';
+                }});
+            }}
+
+            // Alterna dimensao da lente
+            if (resizeBtn) {{
+                resizeBtn.addEventListener('click', (e) => {{
+                    e.stopPropagation();
+                    const isExp = island.classList.toggle('expanded');
+                    resizeBtn.classList.toggle('active', isExp);
+                    resizeBtn.textContent = isExp ? 'Reduzir' : 'Expandir';
+                    setTimeout(updateShader, 260);
+                }});
+            }}
+
+            // Sistema de arrasto suave (Drag & Drop) com limites de janela
+            let isDragging = false;
+            let startX = 0;
+            let startY = 0;
+            let initialLeft = 0;
+            let initialTop = 0;
+
+            island.addEventListener('pointerdown', (e) => {{
+                if (e.target.tagName === 'BUTTON') return;
+                isDragging = true;
+                island.setPointerCapture(e.pointerId);
+
+                const rect = island.getBoundingClientRect();
+                startX = e.clientX;
+                startY = e.clientY;
+                initialLeft = rect.left;
+                initialTop = rect.top;
+
+                // Transfere de transform center para posicionamento fixo pixelado
+                island.style.left = initialLeft + 'px';
+                island.style.top = initialTop + 'px';
+                island.style.transform = 'none';
+            }});
+
+            window.addEventListener('pointermove', (e) => {{
+                if (!isDragging) return;
+                const dx = e.clientX - startX;
+                const dy = e.clientY - startY;
+
+                let newX = initialLeft + dx;
+                let newY = initialTop + dy;
+
+                // Restringe a visao dentro dos limites da janela
+                const margin = 8;
+                const maxW = window.innerWidth - island.offsetWidth - margin;
+                const maxH = window.innerHeight - island.offsetHeight - margin;
+
+                newX = Math.max(margin, Math.min(newX, maxW));
+                newY = Math.max(margin, Math.min(newY, maxH));
+
+                island.style.left = newX + 'px';
+                island.style.top = newY + 'px';
+            }});
+
+            window.addEventListener('pointerup', (e) => {{
+                if (isDragging) {{
+                    isDragging = false;
+                    try {{ island.releasePointerCapture(e.pointerId); }} catch (_) {{}}
+                }}
+            }});
+
+            // Inicializa o shader e atualiza ao redimensionar a janela
+            window.addEventListener('resize', updateShader);
+            // Aguarda carregamento inicial de fontes/layout
+            requestAnimationFrame(() => {{
+                setTimeout(updateShader, 50);
+            }});
+        }})();
+    </script>
 </body>
 </html>
 """

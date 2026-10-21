@@ -225,12 +225,14 @@ Para consultar o sumário analítico no terminal:
 python src/evaluate.py --summary
 ```
 
-#### Passo 4: Dashboard Analítico Web
-Inicie o servidor de telemetria nativo com interface *Liquid Glass*:
+#### Passo 4: Dashboard Analítico Web (com SVG Liquid Glass Shader)
+Inicie o servidor de telemetria nativo com interface refrativa baseada em shaders ópticos:
 ```powershell
 python src/dashboard.py --open
 ```
 - Acesse em: `http://localhost:8080`
+- **Liquid Glass Shader (Shu Ding inspired):** Dynamic Island web arrastável com refração física em tempo real via SVG `<feDisplacementMap>` e mapa gerado matematicamente com *Signed Distance Field* (`roundedRectSDF`). Arraste a lente sobre os números e tabelas para ver a luz se refratar organicamente nas bordas curvas.
+- **Botão de Alternância de Refração:** Permite comparar instantaneamente o efeito de refração óptica SVG contra o *backdrop-filter: blur* genérico.
 - Modo terminal puro: `python src/dashboard.py --cli`
 
 ---
