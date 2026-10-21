@@ -305,9 +305,9 @@ class LivePillApp:
         self.screen_width = self.root.winfo_screenwidth()
         self.screen_height = self.root.winfo_screenheight()
 
-        # Molas físicas (Posição ancorada na base central, Largura, Altura, Raio e Escala de toque)
+        # Molas físicas (Posição ancorada na base central inferior)
         init_x = self.screen_width / 2.0
-        init_bottom_y = self.screen_height - 58.0
+        init_bottom_y = self.screen_height - 60.0
         self.spring_x = SpringValue(init_x, damping=1.0, response=0.36)
         self.spring_bottom_y = SpringValue(init_bottom_y, damping=1.0, response=0.36)
         self.spring_w = SpringValue(300.0, damping=1.0, response=0.32)
@@ -332,6 +332,10 @@ class LivePillApp:
         self._configure_window()
         self._build_canvas()
         self._transition_to("idle")
+        # Aplica geometria inicial e renderiza imediatamente no inferior-meio
+        self._apply_window_geometry()
+        self._render_canvas()
+
         self._load_models_in_background()
         self._start_queue_listener()
         self._animation_tick()
