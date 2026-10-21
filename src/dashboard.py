@@ -99,75 +99,113 @@ def render_html_dashboard(data: dict) -> str:
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Speech-to-Prompt Pipeline | Dashboard</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <title>Speech-to-Prompt Pipeline | Apple Fluid Dashboard</title>
     <style>
         :root {{
-            --bg-color: #0f172a;
-            --card-bg: #1e293b;
-            --border-color: #334155;
-            --text-main: #f8fafc;
-            --text-muted: #94a3b8;
-            --accent-blue: #38bdf8;
-            --accent-green: #34d399;
-            --accent-orange: #fbbf24;
-            --accent-red: #f87171;
-            --accent-purple: #a78bfa;
+            font: 100%/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI Variable Display", system-ui, sans-serif;
+            --bg-color: #000000;
+            --surface-glass: rgba(28, 28, 30, 0.68);
+            --surface-elevated: rgba(44, 44, 46, 0.55);
+            --border-subtle: rgba(255, 255, 255, 0.09);
+            --specular-top: rgba(255, 255, 255, 0.22);
+            --text-main: #f5f5f7;
+            --text-muted: #86868b;
+            --accent-blue: #0a84ff;
+            --accent-green: #30d158;
+            --accent-orange: #ff9f0a;
+            --accent-red: #ff453a;
+            --accent-purple: #bf5af2;
         }}
         * {{ box-sizing: border-box; margin: 0; padding: 0; }}
         body {{
-            font-family: 'Inter', -apple-system, sans-serif;
-            background-color: var(--bg-color);
+            background: radial-gradient(circle at 50% -10%, #1c1c24 0%, #000000 65%);
             color: var(--text-main);
-            padding: 32px 24px;
-            line-height: 1.5;
+            min-height: 100vh;
+            padding: 0 24px 48px;
+            -webkit-font-smoothing: antialiased;
         }}
-        .container {{ max-width: 1280px; margin: 0 auto; }}
+        .container {{ max-width: 1240px; margin: 0 auto; }}
         header {{
+            position: sticky;
+            top: 16px;
+            z-index: 20;
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 28px;
-            padding-bottom: 20px;
-            border-bottom: 1px solid var(--border-color);
+            margin: 16px 0 36px;
+            padding: 18px 24px;
+            background: rgba(22, 22, 24, 0.72);
+            backdrop-filter: blur(24px) saturate(180%);
+            -webkit-backdrop-filter: blur(24px) saturate(180%);
+            border-radius: 20px;
+            border: 1px solid var(--border-subtle);
+            border-top: 1px solid var(--specular-top);
+            box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
         }}
-        .title-group h1 {{ font-size: 1.75rem; font-weight: 700; color: #fff; }}
-        .title-group p {{ color: var(--text-muted); font-size: 0.95rem; }}
-        .tags {{ display: flex; gap: 8px; }}
+        .title-group h1 {{
+            font-size: clamp(1.35rem, 2.2vw, 1.75rem);
+            font-weight: 700;
+            line-height: 1.1;
+            letter-spacing: -0.022em;
+            font-optical-sizing: auto;
+            color: var(--text-main);
+        }}
+        .title-group p {{
+            color: var(--text-muted);
+            font-size: 0.9rem;
+            letter-spacing: -0.005em;
+            margin-top: 2px;
+        }}
+        .tags {{ display: flex; gap: 8px; flex-wrap: wrap; }}
         .tag {{
-            background: #0f172a;
-            border: 1px solid var(--border-color);
-            padding: 4px 10px;
-            border-radius: 6px;
-            font-size: 0.8rem;
-            color: var(--accent-blue);
+            background: var(--surface-elevated);
+            border: 1px solid var(--border-subtle);
+            border-top: 1px solid var(--specular-top);
+            padding: 5px 12px;
+            border-radius: 999px;
+            font-size: 0.78rem;
+            letter-spacing: 0.01em;
+            color: var(--text-main);
             font-weight: 500;
+            user-select: none;
+            transition: transform 100ms ease-out, background 150ms ease;
         }}
+        .tag:active {{ transform: scale(0.96); }}
         .grid {{
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
             gap: 16px;
-            margin-bottom: 32px;
+            margin-bottom: 36px;
         }}
         .card {{
-            background-color: var(--card-bg);
-            border: 1px solid var(--border-color);
-            border-radius: 12px;
-            padding: 20px;
+            background: var(--surface-glass);
+            backdrop-filter: blur(20px) saturate(180%);
+            -webkit-backdrop-filter: blur(20px) saturate(180%);
+            border: 1px solid var(--border-subtle);
+            border-top: 1px solid var(--specular-top);
+            border-radius: 20px;
+            padding: 22px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+            transition: transform 120ms ease-out, background 150ms ease;
+        }}
+        .card:active {{
+            transform: scale(0.975);
         }}
         .card-label {{
-            font-size: 0.85rem;
-            font-weight: 500;
+            font-size: 0.78rem;
+            font-weight: 600;
             color: var(--text-muted);
             text-transform: uppercase;
-            letter-spacing: 0.05em;
-            margin-bottom: 8px;
+            letter-spacing: 0.04em;
+            margin-bottom: 10px;
         }}
         .card-value {{
-            font-size: 2rem;
+            font-size: clamp(1.8rem, 3vw, 2.35rem);
             font-weight: 700;
-            color: #fff;
+            line-height: 1.05;
+            letter-spacing: -0.03em;
+            font-optical-sizing: auto;
+            color: var(--text-main);
         }}
         .card-value.green {{ color: var(--accent-green); }}
         .card-value.orange {{ color: var(--accent-orange); }}
@@ -175,19 +213,25 @@ def render_html_dashboard(data: dict) -> str:
         .card-value.blue {{ color: var(--accent-blue); }}
         .card-subtext {{
             font-size: 0.8rem;
+            letter-spacing: 0.005em;
             color: var(--text-muted);
-            margin-top: 4px;
+            margin-top: 6px;
         }}
         .section-title {{
             font-size: 1.25rem;
             font-weight: 600;
+            letter-spacing: -0.018em;
             margin-bottom: 16px;
-            color: #fff;
+            color: var(--text-main);
         }}
         .table-container {{
-            background-color: var(--card-bg);
-            border: 1px solid var(--border-color);
-            border-radius: 12px;
+            background: var(--surface-glass);
+            backdrop-filter: blur(24px) saturate(180%);
+            -webkit-backdrop-filter: blur(24px) saturate(180%);
+            border: 1px solid var(--border-subtle);
+            border-top: 1px solid var(--specular-top);
+            border-radius: 20px;
+            box-shadow: 0 14px 36px rgba(0, 0, 0, 0.4);
             overflow-x: auto;
         }}
         table {{
@@ -197,39 +241,57 @@ def render_html_dashboard(data: dict) -> str:
             text-align: left;
         }}
         th {{
-            background-color: #172033;
-            padding: 14px 16px;
+            background: rgba(255, 255, 255, 0.03);
+            padding: 15px 18px;
+            font-size: 0.78rem;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
             font-weight: 600;
             color: var(--text-muted);
-            border-bottom: 1px solid var(--border-color);
+            border-bottom: 1px solid var(--border-subtle);
         }}
         td {{
-            padding: 16px;
-            border-bottom: 1px solid #24324a;
+            padding: 16px 18px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
             vertical-align: top;
         }}
         tr:last-child td {{ border-bottom: none; }}
-        .id-col {{ width: 60px; font-weight: 600; color: var(--text-muted); }}
-        .text-col {{ max-width: 380px; word-break: break-word; line-height: 1.45; }}
-        .status-col {{ width: 160px; }}
+        .id-col {{ width: 64px; font-weight: 600; color: var(--text-muted); }}
+        .text-col {{ max-width: 390px; word-break: break-word; line-height: 1.48; }}
+        .status-col {{ width: 170px; }}
         .badge {{
             display: inline-block;
-            padding: 4px 8px;
-            border-radius: 6px;
-            font-size: 0.75rem;
+            padding: 4px 10px;
+            border-radius: 999px;
+            font-size: 0.74rem;
+            letter-spacing: 0.01em;
             font-weight: 600;
             margin-bottom: 4px;
         }}
-        .badge-success {{ background: rgba(52, 211, 153, 0.15); color: #34d399; border: 1px solid rgba(52, 211, 153, 0.3); }}
-        .badge-edit {{ background: rgba(251, 191, 36, 0.15); color: #fbbf24; border: 1px solid rgba(251, 191, 36, 0.3); }}
-        .badge-danger {{ background: rgba(248, 113, 113, 0.15); color: #f87171; border: 1px solid rgba(248, 113, 113, 0.3); }}
-        .badge-info {{ background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3); }}
-        .badge-warning {{ background: rgba(167, 139, 250, 0.15); color: #a78bfa; border: 1px solid rgba(167, 139, 250, 0.3); }}
+        .badge-success {{ background: rgba(48, 209, 88, 0.16); color: #30d158; border: 1px solid rgba(48, 209, 88, 0.32); }}
+        .badge-edit {{ background: rgba(255, 159, 10, 0.16); color: #ff9f0a; border: 1px solid rgba(255, 159, 10, 0.32); }}
+        .badge-danger {{ background: rgba(255, 69, 58, 0.16); color: #ff453a; border: 1px solid rgba(255, 69, 58, 0.32); }}
+        .badge-info {{ background: rgba(10, 132, 255, 0.16); color: #0a84ff; border: 1px solid rgba(10, 132, 255, 0.32); }}
+        .badge-warning {{ background: rgba(191, 90, 242, 0.16); color: #bf5af2; border: 1px solid rgba(191, 90, 242, 0.32); }}
         footer {{
-            margin-top: 32px;
+            margin-top: 36px;
             text-align: center;
             color: var(--text-muted);
-            font-size: 0.85rem;
+            font-size: 0.82rem;
+            letter-spacing: 0.01em;
+        }}
+        @media (prefers-reduced-motion: reduce) {{
+            *, .card, .tag {{
+                transition: opacity 200ms ease !important;
+                transform: none !important;
+            }}
+        }}
+        @media (prefers-reduced-transparency: reduce) {{
+            header, .card, .table-container {{
+                background: #1c1c1e !important;
+                backdrop-filter: none !important;
+                -webkit-backdrop-filter: none !important;
+            }}
         }}
     </style>
 </head>
@@ -238,12 +300,12 @@ def render_html_dashboard(data: dict) -> str:
         <header>
             <div class="title-group">
                 <h1>Speech-to-Prompt Pipeline</h1>
-                <p>Dashboard de Monitoramento de Qualidade & Métricas de Engenharia de Dados</p>
+                <p>Monitoramento de Qualidade & Telemetria de Engenharia de Dados</p>
             </div>
             <div class="tags">
                 <span class="tag">PostgreSQL 16</span>
                 <span class="tag">Faster-Whisper CUDA</span>
-                <span class="tag">Ollama Qwen2.5:7b</span>
+                <span class="tag">Ollama Qwen2.5</span>
             </div>
         </header>
 

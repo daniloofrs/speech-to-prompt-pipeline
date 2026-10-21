@@ -1,25 +1,26 @@
-"""Pílula Flutuante Avulsa com Transcrição em Tempo Real (Live Streaming).
+"""Pílula Flutuante estilo Apple Dynamic Island (Transcrição ao Vivo + Prompt Instantâneo).
 
-Otimizações de Performance:
-1. Transcrição ao vivo enquanto você fala: o texto aparece na tela em tempo real.
-2. Modelo otimizado para baixa latência (small com beam_size=1, sem timestamps).
-3. Transcrição instantânea ao finalizar (o texto já está 95%+ pronto ao clicar em parar).
-4. Chamada de reescrita ao Ollama ultra rápida (num_predict=180, num_ctx=1024).
-5. Visual pílula moderno, 100% arredondado e translúcido (frosted glass).
-6. Cópia automática para o clipboard (Ctrl+V) com exibição completa na tela.
+Inspirado nos princípios de design da Apple (WWDC Designing Fluid Interfaces):
+- Física de molas (Springs com damping ratio e response) para transições contínuas e interrompíveis
+- Resposta imediata no pointer-down (compressão tátil instantânea ao pressionar)
+- Manipulação direta 1:1 com preservação do grab offset, projeção de momento e rubber-banding nas bordas
+- Materiais translúcidos em camadas (Obsidian Dark Glass) com borda especular superior
+- Ondas de voz reativas em tempo real (1:1 com a amplitude RMS do microfone)
 """
 
 import json
 import logging
+import math
 import os
 import queue
 import sys
 import threading
 import time
 import tkinter as tk
+import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Dict, List, Optional, Tuple
 
 # Garante que a raiz do projeto esteja no sys.path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -46,8 +47,6 @@ from faster_whisper import WhisperModel
 from src.config import (
     LIVE_OLLAMA_MODEL,
     OLLAMA_HOST,
-    OLLAMA_MODEL,
-    OLLAMA_TEMPERATURE,
     WHISPER_COMPUTE_TYPE,
     WHISPER_DEVICE,
 )
@@ -61,11 +60,33 @@ logging.basicConfig(
 logger = logging.getLogger("live_pill")
 
 SAMPLE_RATE = 16000
-KEY_COLOR = "#000001"  # Cor chave para transparência no Windows
+KEY_COLOR = "#010102"  # Cor-chave de recorte transparente no Windows
 
-# Modelos ultra-rápidos e precisos para interação desktop em tempo real
+# Modelos de alta precisão e baixa latência na GPU
 LIVE_WHISPER_MODEL = os.getenv("LIVE_WHISPER_MODEL", "medium")
 FAST_OLLAMA_MODEL = os.getenv("LIVE_OLLAMA_MODEL", LIVE_OLLAMA_MODEL)
+
+# Paleta de Materiais Apple Dark Mode (HIG System Colors)
+APPLE_BG_MATERIAL = "#0d0d10"       # Superfície principal Dynamic Island
+APPLE_BG_PRESSED = "#15151a"        # Superfície sob compressão (pointer-down)
+APPLE_CARD_ELEVATED = "#18181d"     # Cartão interno elevado
+APPLE_CARD_BORDER = "#28282f"       # Contorno sutil de cartão interno
+APPLE_BORDER_OUTER = "#242429"      # Borda externa da cápsula
+APPLE_SPECULAR_TOP = "#3d3d45"      # Brilho especular superior (luz incidindo no vidro)
+APPLE_BTN_BG = "#26262c"            # Botão secundário elevado
+APPLE_BTN_HOVER = "#32323a"         # Botão secundário hover
+APPLE_BTN_ACTIVE = "#3e3e47"        # Botão secundário pressionado
+APPLE_TEXT_PRIMARY = "#f5f5f7"      # Branco óptico Apple
+APPLE_TEXT_SECONDARY = "#86868b"    # Cinza secundário Apple
+APPLE_TEXT_TERTIARY = "#636366"     # Cinza terciário Apple
+APPLE_RED = "#ff453a"               # System Red (Gravação)
+APPLE_BLUE = "#0a84ff"              # System Blue (Ação primária / IA)
+APPLE_BLUE_HOVER = "#2190ff"        # System Blue Hover
+APPLE_BLUE_ACTIVE = "#0070e0"       # System Blue Active
+APPLE_INDIGO = "#5e5ce6"            # System Indigo (Siri / Processamento)
+APPLE_GREEN = "#30d158"             # System Green (Sucesso)
+APPLE_GREEN_BG = "#0f2918"          # Fundo translúcido do badge de sucesso
+APPLE_ORANGE = "#ff9f0a"            # System Orange (Aquecimento)
 
 # Prompt de contexto para calibrar o vocabulário técnico do Whisper em português
 TECH_INITIAL_PROMPT = (
@@ -79,7 +100,6 @@ def normalize_audio(audio: np.ndarray) -> np.ndarray:
     """Remove ruído de bias DC e normaliza volume para faixa ideal de escuta do Whisper."""
     if len(audio) == 0:
         return audio
-    # Remove componente DC (bias contínuo do microfone)
     audio = audio - np.mean(audio)
     peak = np.max(np.abs(audio))
     if peak > 0.01:
@@ -87,31 +107,127 @@ def normalize_audio(audio: np.ndarray) -> np.ndarray:
     return audio.astype(np.float32)
 
 
-def draw_smooth_round_rect(
+def apple_rubberband(overshoot: float, dimension: float, constant: float = 0.55) -> float:
+    """Equação oficial de rubber-banding da Apple (WWDC Designing Fluid Interfaces)."""
+    if dimension <= 0:
+        return 0.0
+    return (overshoot * dimension * constant) / (dimension + constant * abs(overshoot))
+
+
+def apple_project(initial_velocity: float, deceleration_rate: float = 0.992) -> float:
+    """Projeção de momento da Apple para calcular ponto de repouso após um arremesso (flick)."""
+    return (initial_velocity / 1000.0) * deceleration_rate / (1.0 - deceleration_rate)
+
+
+class SpringValue:
+    """Mola física parametrizada por damping ratio e response (padrão Apple UIKit/SwiftUI).
+
+    Integra posição e velocidade continuamente, permitindo interrupção e redirecionamento
+    em pleno voo sem descontinuidade de velocidade.
+    """
+
+    def __init__(self, initial: float, damping: float = 1.0, response: float = 0.32) -> None:
+        self.value = float(initial)
+        self.target = float(initial)
+        self.velocity = 0.0
+        self.damping = damping
+        self.response = response
+
+    def set_target(
+        self,
+        target: float,
+        damping: Optional[float] = None,
+        response: Optional[float] = None,
+        add_velocity: float = 0.0,
+    ) -> None:
+        self.target = float(target)
+        if damping is not None:
+            self.damping = damping
+        if response is not None:
+            self.response = response
+        if add_velocity != 0.0:
+            self.velocity += add_velocity
+
+    def snap(self, val: float) -> None:
+        self.value = float(val)
+        self.target = float(val)
+        self.velocity = 0.0
+
+    def step(self, dt: float) -> bool:
+        """Avança a simulação física em dt segundos. Retorna True se ainda estiver em movimento."""
+        dt = min(dt, 0.05)  # Estabilidade numérica
+        if abs(self.target - self.value) < 0.15 and abs(self.velocity) < 1.5:
+            self.value = self.target
+            self.velocity = 0.0
+            return False
+
+        omega = 2.0 * math.pi / max(self.response, 0.04)
+        stiffness = omega * omega
+        damping_coeff = 2.0 * self.damping * omega
+
+        # Integração semi-implícita de Euler
+        force = -stiffness * (self.value - self.target) - damping_coeff * self.velocity
+        self.velocity += force * dt
+        self.value += self.velocity * dt
+        return True
+
+
+def build_rounded_polygon_points(
+    x1: float, y1: float, x2: float, y2: float, radius: float, segments_per_corner: int = 10
+) -> List[float]:
+    """Gera vértices trigonométricos exatos para cápsulas e squircles sem distorção."""
+    w = max(1.0, x2 - x1)
+    h = max(1.0, y2 - y1)
+    r = min(radius, w / 2.0, h / 2.0)
+
+    corners = [
+        (x2 - r, y1 + r, -math.pi / 2.0, 0.0),          # Superior direito
+        (x2 - r, y2 - r, 0.0, math.pi / 2.0),           # Inferior direito
+        (x1 + r, y2 - r, math.pi / 2.0, math.pi),       # Inferior esquerdo
+        (x1 + r, y1 + r, math.pi, 3.0 * math.pi / 2.0), # Superior esquerdo
+    ]
+
+    pts: List[float] = []
+    for cx, cy, start_ang, end_ang in corners:
+        for i in range(segments_per_corner + 1):
+            t = i / segments_per_corner
+            ang = start_ang + t * (end_ang - start_ang)
+            pts.append(cx + r * math.cos(ang))
+            pts.append(cy + r * math.sin(ang))
+    return pts
+
+
+def draw_apple_surface(
     canvas: tk.Canvas,
     x1: float,
     y1: float,
     x2: float,
     y2: float,
-    radius: float = 22,
-    **kwargs,
-) -> int:
-    """Desenha um retângulo arredondado suave usando spline Bézier."""
-    points = [
-        x1 + radius, y1,
-        x2 - radius, y1,
-        x2, y1,
-        x2, y1 + radius,
-        x2, y2 - radius,
-        x2, y2,
-        x2 - radius, y2,
-        x1 + radius, y2,
-        x1, y2,
-        x1, y2 - radius,
-        x1, y1 + radius,
-        x1, y1,
-    ]
-    return canvas.create_polygon(points, smooth=True, **kwargs)
+    radius: float,
+    fill: str,
+    outline: str = "",
+    specular_top: str = "",
+    outline_width: float = 1.0,
+) -> None:
+    """Renderiza uma superfície arredondada estilo Apple com brilho especular superior."""
+    pts = build_rounded_polygon_points(x1, y1, x2, y2, radius)
+    canvas.create_polygon(
+        pts,
+        smooth=False,
+        fill=fill,
+        outline=outline if outline else fill,
+        width=outline_width,
+    )
+    if specular_top and (x2 - x1) > radius * 2.2:
+        # Borda superior que capta a luz (Apple Material Depth §12)
+        canvas.create_line(
+            x1 + radius * 0.85,
+            y1 + 1,
+            x2 - radius * 0.85,
+            y1 + 1,
+            fill=specular_top,
+            width=1,
+        )
 
 
 def fast_call_ollama(text: str) -> str:
@@ -134,11 +250,11 @@ def fast_call_ollama(text: str) -> str:
         ],
         "options": {
             "temperature": 0.0,
-            "num_predict": 60,   # Corta a geração logo após o comando direto
-            "num_ctx": 256,      # Contexto reduzido acelera consideravelmente o KV cache
+            "num_predict": 60,
+            "num_ctx": 256,
             "stop": ["\n\n", "Nota:", "Observação:", "Explicação:", "DÚVIDAS:"],
         },
-        "keep_alive": "60m",     # Mantém o modelo residente na VRAM da GPU sem descarregar
+        "keep_alive": "60m",
         "stream": False,
     }
 
@@ -160,390 +276,627 @@ def fast_call_ollama(text: str) -> str:
 
 
 class LivePillApp:
-    """Widget de pílula translúcida com transcrição ao vivo em tempo real."""
+    """Interface flutuante estilo Apple Dynamic Island com física de molas e transcrição em tempo real."""
 
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
-        self.is_recording = False
-        self.is_processing = False
-        self.audio_chunks = []
+        self.state = "idle"  # 'idle' | 'recording' | 'processing' | 'result' | 'toast'
+        self.toast_message = ""
+        self.models_ready = False
+
+        # Captura e modelos
+        self.audio_chunks: List[np.ndarray] = []
         self.audio_stream: Optional[sd.InputStream] = None
         self.whisper_model: Optional[WhisperModel] = None
         self.record_start_time = 0.0
+        self.current_rms = 0.0
+        self.smoothed_rms = 0.0
+        self.wave_bars = [0.2, 0.35, 0.5, 0.35, 0.2]
 
-        # Controle de transcrição ao vivo
+        # Transcrição e resultado
         self.live_transcript = ""
-        self.last_transcribed_len = 0
-        self.live_transcribe_thread: Optional[threading.Thread] = None
-
-        # Coordenadas de arraste
-        self.start_x = 0
-        self.start_y = 0
-        self.win_x = 0
-        self.win_y = 0
-        self.has_dragged = False
-
         self.last_raw_text = ""
         self.last_prompt_text = ""
+        self.copy_feedback_active = False
 
-        self.ui_queue = queue.Queue()
+        self.ui_queue: queue.Queue = queue.Queue()
+
+        # Geometria da tela
+        self.screen_width = self.root.winfo_screenwidth()
+        self.screen_height = self.root.winfo_screenheight()
+
+        # Molas físicas (Posição ancorada na base central, Largura, Altura, Raio e Escala de toque)
+        init_x = self.screen_width / 2.0
+        init_bottom_y = self.screen_height - 58.0
+        self.spring_x = SpringValue(init_x, damping=1.0, response=0.36)
+        self.spring_bottom_y = SpringValue(init_bottom_y, damping=1.0, response=0.36)
+        self.spring_w = SpringValue(300.0, damping=1.0, response=0.32)
+        self.spring_h = SpringValue(46.0, damping=1.0, response=0.32)
+        self.spring_r = SpringValue(23.0, damping=1.0, response=0.32)
+        self.spring_scale = SpringValue(1.0, damping=0.9, response=0.14)
+
+        # Estado de manipulação direta (Pointer / Gesture tracking)
+        self.is_pointer_down = False
+        self.has_dragged = False
+        self.press_screen_x = 0.0
+        self.press_screen_y = 0.0
+        self.grab_offset_x = 0.0
+        self.grab_offset_y = 0.0
+        self.pointer_history: List[Tuple[float, float, float]] = []
+        self.hovered_region: Optional[str] = None
+        self.pressed_region: Optional[str] = None
+        self.interactive_regions: Dict[str, Tuple[float, float, float, float, Callable[[], None]]] = {}
+
+        self.last_frame_time = time.perf_counter()
 
         self._configure_window()
-        self._build_ui()
+        self._build_canvas()
+        self._transition_to("idle")
         self._load_models_in_background()
         self._start_queue_listener()
+        self._animation_tick()
 
     def _configure_window(self) -> None:
         self.root.overrideredirect(True)
         self.root.attributes("-topmost", True)
         self.root.config(bg=KEY_COLOR)
         self.root.attributes("-transparentcolor", KEY_COLOR)
-        self.root.attributes("-alpha", 0.94)
+        self.root.attributes("-alpha", 0.96)
 
-        self.screen_width = self.root.winfo_screenwidth()
-        self.screen_height = self.root.winfo_screenheight()
-
-    def _build_ui(self) -> None:
-        self.container = tk.Frame(self.root, bg=KEY_COLOR)
-        self.container.pack(fill="both", expand=True)
-
-        # 1. Canvas para a Pílula Compacta
-        self.pill_canvas = tk.Canvas(
-            self.container,
+    def _build_canvas(self) -> None:
+        self.canvas = tk.Canvas(
+            self.root,
             bg=KEY_COLOR,
             highlightthickness=0,
+            bd=0,
             cursor="hand2",
         )
-        self.pill_canvas.pack(fill="both", expand=True)
-        self._bind_mouse(self.pill_canvas)
+        self.canvas.pack(fill="both", expand=True)
 
-        # 2. Frame de Gravação com Transcrição ao Vivo
-        self.live_frame = tk.Frame(
-            self.container,
-            bg="#18131a",
-            highlightthickness=1,
-            highlightbackground="#ef4444",
-            padx=14,
-            pady=10,
-        )
-        self._build_live_frame()
+        self.canvas.bind("<ButtonPress-1>", self._on_pointer_down)
+        self.canvas.bind("<B1-Motion>", self._on_pointer_move)
+        self.canvas.bind("<ButtonRelease-1>", self._on_pointer_up)
+        self.canvas.bind("<Motion>", self._on_pointer_hover)
+        self.canvas.bind("<Leave>", self._on_pointer_leave)
 
-        # 3. Frame de Resultados Expandido (Final)
-        self.results_frame = tk.Frame(
-            self.container,
-            bg="#121217",
-            highlightthickness=1,
-            highlightbackground="#27272a",
-            padx=16,
-            pady=12,
-        )
-        self._build_expanded_results()
+    def _transition_to(self, new_state: str, toast_text: str = "") -> None:
+        """Altera o estado da Dynamic Island animando suavemente via molas criticamente amortecidas."""
+        self.state = new_state
+        if new_state == "idle":
+            self.spring_w.set_target(300.0, damping=1.0, response=0.32)
+            self.spring_h.set_target(46.0, damping=1.0, response=0.32)
+            self.spring_r.set_target(23.0, damping=1.0, response=0.32)
+        elif new_state == "recording":
+            self.spring_w.set_target(470.0, damping=0.92, response=0.34)
+            self.spring_h.set_target(118.0, damping=0.92, response=0.34)
+            self.spring_r.set_target(28.0, damping=1.0, response=0.32)
+        elif new_state == "processing":
+            self.spring_w.set_target(330.0, damping=1.0, response=0.30)
+            self.spring_h.set_target(50.0, damping=1.0, response=0.30)
+            self.spring_r.set_target(25.0, damping=1.0, response=0.30)
+        elif new_state == "result":
+            # Ajusta altura dinamicamente conforme tamanho do prompt gerado
+            prompt_lines = max(2, math.ceil(len(self.last_prompt_text) / 54))
+            raw_lines = max(1, math.ceil(len(self.last_raw_text) / 62))
+            target_h = min(340.0, 178.0 + prompt_lines * 19.0 + min(2, raw_lines) * 16.0)
+            self.spring_w.set_target(510.0, damping=0.94, response=0.35)
+            self.spring_h.set_target(target_h, damping=0.94, response=0.35)
+            self.spring_r.set_target(28.0, damping=1.0, response=0.32)
+        elif new_state == "toast":
+            self.toast_message = toast_text
+            self.spring_w.set_target(320.0, damping=0.9, response=0.28)
+            self.spring_h.set_target(46.0, damping=0.9, response=0.28)
+            self.spring_r.set_target(23.0, damping=1.0, response=0.28)
 
-        self._show_compact_pill()
+    # -------------------------------------------------------------------------
+    # Eventos de Ponteiro (Apple Direct Manipulation, Hysteresis & Momentum)
+    # -------------------------------------------------------------------------
 
-    def _build_live_frame(self) -> None:
-        """Cria os componentes da tela de gravação com texto ao vivo."""
-        header = tk.Frame(self.live_frame, bg="#18131a")
-        header.pack(fill="x", pady=(0, 4))
-        self._bind_mouse(header)
+    def _hit_test(self, x: float, y: float) -> Optional[str]:
+        for name, (x1, y1, x2, y2, _) in self.interactive_regions.items():
+            # Hit padding de +6px para conforto tátil (Apple Gesture Checklist §10)
+            if (x1 - 6) <= x <= (x2 + 6) and (y1 - 6) <= y <= (y2 + 6):
+                return name
+        return None
 
-        self.live_timer_lbl = tk.Label(
-            header,
-            text="🔴 Ouvindo em tempo real (00:00)",
-            font=("Segoe UI", 9, "bold"),
-            bg="#18131a",
-            fg="#fca5a5",
-            cursor="hand2",
-        )
-        self.live_timer_lbl.pack(side="left")
-        self._bind_mouse(self.live_timer_lbl)
+    def _on_pointer_hover(self, event: tk.Event) -> None:
+        region = self._hit_test(event.x, event.y)
+        if region != self.hovered_region:
+            self.hovered_region = region
+            self._render_canvas()
 
-        close_btn = tk.Label(
-            header,
-            text="✕",
-            font=("Segoe UI", 9),
-            bg="#18131a",
-            fg="#71717a",
-            cursor="hand2",
-        )
-        close_btn.pack(side="right")
-        close_btn.bind("<Button-1>", lambda e: self.root.destroy())
+    def _on_pointer_leave(self, _event: tk.Event) -> None:
+        if self.hovered_region is not None:
+            self.hovered_region = None
+            self._render_canvas()
 
-        # Caixa onde a fala aparece ao vivo conforme o usuário fala
-        self.live_text_lbl = tk.Label(
-            self.live_frame,
-            text="Fale agora, suas palavras aparecerão aqui...",
-            font=("Segoe UI", 10),
-            bg="#241b26",
-            fg="#e4e4e7",
-            wraplength=440,
-            justify="left",
-            anchor="nw",
-            padx=10,
-            pady=8,
-            cursor="hand2",
-        )
-        self.live_text_lbl.pack(fill="x", pady=(2, 6))
-        self._bind_mouse(self.live_text_lbl)
-
-        footer = tk.Label(
-            self.live_frame,
-            text="Clique em qualquer lugar para concluir e copiar para o Ctrl+V",
-            font=("Segoe UI", 8),
-            bg="#18131a",
-            fg="#a1a1aa",
-            cursor="hand2",
-        )
-        footer.pack(anchor="w")
-        self._bind_mouse(footer)
-
-    def _build_expanded_results(self) -> None:
-        """Cria a tela com os resultados finais."""
-        header = tk.Frame(self.results_frame, bg="#121217")
-        header.pack(fill="x", pady=(0, 6))
-
-        self.badge_status = tk.Label(
-            header,
-            text="✓ Copiado para o Ctrl+V",
-            font=("Segoe UI", 9, "bold"),
-            bg="#064e3b",
-            fg="#34d399",
-            padx=8,
-            pady=2,
-        )
-        self.badge_status.pack(side="left")
-
-        close_lbl = tk.Label(
-            header,
-            text="✕",
-            font=("Segoe UI", 10),
-            bg="#121217",
-            fg="#71717a",
-            cursor="hand2",
-            padx=4,
-        )
-        close_lbl.pack(side="right")
-        close_lbl.bind("<Button-1>", lambda e: self.root.destroy())
-
-        # Transcrição da Fala
-        tk.Label(
-            self.results_frame,
-            text="O QUE VOCÊ DISSE:",
-            font=("Segoe UI", 8, "bold"),
-            bg="#121217",
-            fg="#71717a",
-            anchor="w",
-        ).pack(fill="x", pady=(4, 2))
-
-        self.raw_text_box = tk.Text(
-            self.results_frame,
-            height=3,
-            wrap="word",
-            font=("Segoe UI", 9),
-            bg="#18181b",
-            fg="#d4d4d8",
-            relief="flat",
-            padx=10,
-            pady=6,
-            highlightthickness=1,
-            highlightbackground="#27272a",
-        )
-        self.raw_text_box.pack(fill="x", pady=(0, 6))
-
-        # Pedido Refinado
-        tk.Label(
-            self.results_frame,
-            text="PEDIDO PRONTO PARA IA (COPIADO):",
-            font=("Segoe UI", 8, "bold"),
-            bg="#121217",
-            fg="#34d399",
-            anchor="w",
-        ).pack(fill="x", pady=(2, 2))
-
-        self.prompt_text_box = tk.Text(
-            self.results_frame,
-            height=4,
-            wrap="word",
-            font=("Segoe UI", 9, "bold"),
-            bg="#0d241c",
-            fg="#ecfdf5",
-            relief="flat",
-            padx=10,
-            pady=6,
-            highlightthickness=1,
-            highlightbackground="#065f46",
-        )
-        self.prompt_text_box.pack(fill="x", pady=(0, 10))
-
-        # Ações
-        actions = tk.Frame(self.results_frame, bg="#121217")
-        actions.pack(fill="x")
-
-        self.btn_new = tk.Button(
-            actions,
-            text="🎙️ Falar Novamente",
-            font=("Segoe UI", 8, "bold"),
-            bg="#27272a",
-            fg="#f4f4f5",
-            activebackground="#3f3f46",
-            relief="flat",
-            padx=12,
-            pady=5,
-            cursor="hand2",
-            command=self._on_new_record_click,
-        )
-        self.btn_new.pack(side="left")
-
-        self.btn_copy = tk.Button(
-            actions,
-            text="📋 Copiar Novamente",
-            font=("Segoe UI", 8),
-            bg="#18181b",
-            fg="#a1a1aa",
-            relief="flat",
-            padx=10,
-            pady=5,
-            cursor="hand2",
-            command=self._on_copy_again_click,
-        )
-        self.btn_copy.pack(side="left", padx=8)
-
-        self.btn_collapse = tk.Button(
-            actions,
-            text="Recolher",
-            font=("Segoe UI", 8),
-            bg="#121217",
-            fg="#71717a",
-            relief="flat",
-            padx=8,
-            pady=5,
-            cursor="hand2",
-            command=self._show_compact_pill,
-        )
-        self.btn_collapse.pack(side="right")
-
-    def _show_compact_pill(self, text: str = "🎙️  Falar comando", bg_col: str = "#121217", border_col: str = "#27272a", text_col: str = "#f4f4f5") -> None:
-        """Exibe a pílula compacta de espera."""
-        self.results_frame.pack_forget()
-        self.live_frame.pack_forget()
-        self.pill_canvas.pack(fill="both", expand=True)
-
-        width = 330
-        height = 48
-        x = (self.screen_width - width) // 2
-        y = self.screen_height - height - 60
-        self.root.geometry(f"{width}x{height}+{x}+{y}")
-
-        self.pill_canvas.delete("all")
-        draw_smooth_round_rect(
-            self.pill_canvas,
-            x1=2, y1=2, x2=width - 2, y2=height - 2,
-            radius=22,
-            fill=bg_col,
-            outline=border_col,
-            width=1.5,
-        )
-        self.pill_canvas.create_text(
-            width // 2 - 12, height // 2,
-            text=text,
-            fill=text_col,
-            font=("Segoe UI", 10, "bold"),
-        )
-        self.pill_canvas.create_text(
-            width - 22, height // 2,
-            text="✕",
-            fill="#52525b",
-            font=("Segoe UI", 9),
-        )
-
-    def _show_live_recording(self) -> None:
-        """Exibe o painel de transcrição ao vivo durante a fala."""
-        self.pill_canvas.pack_forget()
-        self.results_frame.pack_forget()
-        self.live_frame.pack(fill="both", expand=True)
-
-        width = 480
-        height = 116
-        x = (self.screen_width - width) // 2
-        y = self.screen_height - height - 60
-        self.root.geometry(f"{width}x{height}+{x}+{y}")
-
-        self.live_text_lbl.config(text="Fale agora, suas palavras aparecerão aqui...", fg="#94a3b8")
-
-    def _show_expanded_results(self, raw_text: str, prompt_text: str) -> None:
-        """Exibe o resultado final com as duas caixas de texto."""
-        self.pill_canvas.pack_forget()
-        self.live_frame.pack_forget()
-        self.results_frame.pack(fill="both", expand=True)
-
-        width = 520
-        height = 290
-        x = (self.screen_width - width) // 2
-        y = self.screen_height - height - 60
-        self.root.geometry(f"{width}x{height}+{x}+{y}")
-
-        self.last_raw_text = raw_text
-        self.last_prompt_text = prompt_text
-
-        self.raw_text_box.delete("1.0", tk.END)
-        self.raw_text_box.insert("1.0", raw_text)
-
-        self.prompt_text_box.delete("1.0", tk.END)
-        self.prompt_text_box.insert("1.0", prompt_text)
-
-    def _bind_mouse(self, widget: tk.Widget) -> None:
-        widget.bind("<Button-1>", self._on_mouse_down)
-        widget.bind("<B1-Motion>", self._on_mouse_move)
-        widget.bind("<ButtonRelease-1>", self._on_mouse_up)
-
-    def _on_mouse_down(self, event: tk.Event) -> None:
-        self.start_x = event.x_root
-        self.start_y = event.y_root
-        self.win_x = self.root.winfo_x()
-        self.win_y = self.root.winfo_y()
+    def _on_pointer_down(self, event: tk.Event) -> None:
+        """Feedback imediato no pointer-down (§1: Respond on pointer-down, not on release)."""
+        self.is_pointer_down = True
         self.has_dragged = False
+        self.press_screen_x = float(event.x_root)
+        self.press_screen_y = float(event.y_root)
 
-    def _on_mouse_move(self, event: tk.Event) -> None:
-        dx = event.x_root - self.start_x
-        dy = event.y_root - self.start_y
-        if (dx * dx + dy * dy) > 16:
+        # Preserva o offset exato de onde o usuário segurou (§2 Direct manipulation)
+        self.grab_offset_x = self.press_screen_x - self.spring_x.value
+        self.grab_offset_y = self.press_screen_y - self.spring_bottom_y.value
+
+        now = time.perf_counter()
+        self.pointer_history = [(now, self.press_screen_x, self.press_screen_y)]
+
+        self.pressed_region = self._hit_test(event.x, event.y)
+
+        # Compressão física sutil imediata ao tocar
+        self.spring_scale.set_target(0.965, damping=0.95, response=0.12)
+        self._render_canvas()
+
+    def _on_pointer_move(self, event: tk.Event) -> None:
+        if not self.is_pointer_down:
+            return
+
+        sx = float(event.x_root)
+        sy = float(event.y_root)
+        dx = sx - self.press_screen_x
+        dy = sy - self.press_screen_y
+
+        # Histerese de 8px antes de assumir arraste (§10 Gesture design details)
+        if not self.has_dragged and math.hypot(dx, dy) > 8.0:
             self.has_dragged = True
-            self.root.geometry(f"+{self.win_x + dx}+{self.win_y + dy}")
+            self.pressed_region = None
+            # Restaura a escala normal enquanto flutua sob o ponteiro
+            self.spring_scale.set_target(1.0, damping=0.95, response=0.16)
 
-    def _on_mouse_up(self, event: tk.Event) -> None:
         if self.has_dragged:
+            now = time.perf_counter()
+            self.pointer_history.append((now, sx, sy))
+            if len(self.pointer_history) > 6:
+                self.pointer_history.pop(0)
+
+            raw_target_x = sx - self.grab_offset_x
+            raw_target_bottom_y = sy - self.grab_offset_y
+
+            # Limites seguros da tela com rubber-banding progressivo (§9)
+            half_w = self.spring_w.value / 2.0 + 16.0
+            min_x = half_w
+            max_x = self.screen_width - half_w
+            min_by = self.spring_h.value + 20.0
+            max_by = self.screen_height - 20.0
+
+            if raw_target_x < min_x:
+                raw_target_x = min_x - apple_rubberband(min_x - raw_target_x, 180.0)
+            elif raw_target_x > max_x:
+                raw_target_x = max_x + apple_rubberband(raw_target_x - max_x, 180.0)
+
+            if raw_target_bottom_y < min_by:
+                raw_target_bottom_y = min_by - apple_rubberband(min_by - raw_target_bottom_y, 180.0)
+            elif raw_target_bottom_y > max_by:
+                raw_target_bottom_y = max_by + apple_rubberband(raw_target_bottom_y - max_by, 180.0)
+
+            # Rastreamento 1:1 durante o arraste
+            self.spring_x.snap(raw_target_x)
+            self.spring_bottom_y.snap(raw_target_bottom_y)
+            self._apply_window_geometry()
+
+    def _on_pointer_up(self, event: tk.Event) -> None:
+        if not self.is_pointer_down:
+            return
+        self.is_pointer_down = False
+
+        # Solta a compressão tátil de volta para 1.0
+        self.spring_scale.set_target(1.0, damping=0.82, response=0.22)
+
+        if self.has_dragged:
+            # Calcula velocidade de soltura e projeta o momento (§5 e §6)
+            vx, vy = self._compute_release_velocity()
+            proj_x = self.spring_x.value + apple_project(vx, 0.990)
+            proj_by = self.spring_bottom_y.value + apple_project(vy, 0.990)
+
+            half_w = self.spring_w.value / 2.0 + 20.0
+            clamped_x = max(half_w, min(self.screen_width - half_w, proj_x))
+            clamped_by = max(self.spring_h.value + 24.0, min(self.screen_height - 24.0, proj_by))
+
+            # Handoff de velocidade para as molas independentes X e Y (§3 e §5)
+            self.spring_x.set_target(clamped_x, damping=0.82, response=0.38, add_velocity=vx)
+            self.spring_bottom_y.set_target(clamped_by, damping=0.82, response=0.38, add_velocity=vy)
             return
 
-        # Botão de fechar da pílula compacta
-        if not self.is_recording and event.x > 300:
-            self.root.destroy()
+        # Se foi um clique sem arraste, verifica se soltou sobre a mesma região pressionada
+        release_region = self._hit_test(event.x, event.y)
+        active_region = self.pressed_region
+        self.pressed_region = None
+
+        if active_region and active_region == release_region and active_region in self.interactive_regions:
+            _, _, _, _, callback = self.interactive_regions[active_region]
+            callback()
             return
 
-        self._toggle_recording()
-
-    def _toggle_recording(self) -> None:
-        if self.is_processing:
-            return
-
-        if not self.is_recording:
+        # Ação padrão ao tocar no corpo da Dynamic Island
+        if self.state in ("idle", "toast"):
             self._start_audio_capture()
-        else:
+        elif self.state == "recording":
             self._stop_audio_capture()
 
+    def _compute_release_velocity(self) -> Tuple[float, float]:
+        if len(self.pointer_history) < 2:
+            return 0.0, 0.0
+        t0, x0, y0 = self.pointer_history[0]
+        t1, x1, y1 = self.pointer_history[-1]
+        dt = t1 - t0
+        if dt <= 0.004 or (time.perf_counter() - t1) > 0.12:
+            return 0.0, 0.0
+        vx = max(-2200.0, min(2200.0, (x1 - x0) / dt))
+        vy = max(-2200.0, min(2200.0, (y1 - y0) / dt))
+        return vx, vy
+
+    # -------------------------------------------------------------------------
+    # Loop de Física e Renderização (60 FPS sincronizado)
+    # -------------------------------------------------------------------------
+
+    def _animation_tick(self) -> None:
+        now = time.perf_counter()
+        dt = now - self.last_frame_time
+        self.last_frame_time = now
+
+        moved_x = self.spring_x.step(dt)
+        moved_y = self.spring_bottom_y.step(dt)
+        moved_w = self.spring_w.step(dt)
+        moved_h = self.spring_h.step(dt)
+        moved_r = self.spring_r.step(dt)
+        moved_s = self.spring_scale.step(dt)
+
+        # Atualiza ondas de voz reativas durante gravação
+        if self.state == "recording":
+            self.smoothed_rms = 0.72 * self.smoothed_rms + 0.28 * self.current_rms
+            base_energy = min(1.0, self.smoothed_rms * 14.0)
+            t = now * 9.5
+            Multipliers = [0.55, 0.85, 1.15, 0.85, 0.55]
+            for i in range(5):
+                wave = 0.18 + base_energy * Multipliers[i] * (0.65 + 0.35 * math.sin(t + i * 1.1))
+                self.wave_bars[i] = max(0.16, min(1.0, wave))
+
+        if moved_x or moved_y or moved_w or moved_h or moved_r or moved_s:
+            self._apply_window_geometry()
+            self._render_canvas()
+        elif self.state in ("recording", "processing"):
+            self._render_canvas()
+
+        self.root.after(16, self._animation_tick)
+
+    def _apply_window_geometry(self) -> None:
+        scale = self.spring_scale.value
+        w = max(120, int(round(self.spring_w.value * scale)))
+        h = max(36, int(round(self.spring_h.value * scale)))
+        x = int(round(self.spring_x.value - w / 2.0))
+        y = int(round(self.spring_bottom_y.value - h))
+        self.root.geometry(f"{w}x{h}+{x}+{y}")
+
+    def _render_canvas(self) -> None:
+        self.canvas.delete("all")
+        self.interactive_regions.clear()
+
+        scale = self.spring_scale.value
+        w = max(120.0, self.spring_w.value * scale)
+        h = max(36.0, self.spring_h.value * scale)
+        r = max(14.0, self.spring_r.value * scale)
+
+        bg_fill = APPLE_BG_PRESSED if (self.is_pointer_down and not self.has_dragged and not self.pressed_region) else APPLE_BG_MATERIAL
+
+        # 1. Cápsula / Superfície Principal da Dynamic Island
+        draw_apple_surface(
+            self.canvas,
+            x1=2,
+            y1=2,
+            x2=w - 2,
+            y2=h - 2,
+            radius=r,
+            fill=bg_fill,
+            outline=APPLE_BORDER_OUTER,
+            specular_top=APPLE_SPECULAR_TOP,
+            outline_width=1.2,
+        )
+
+        # Renderiza conteúdo conforme o estado atual
+        if self.state == "idle":
+            self._draw_idle_state(w, h)
+        elif self.state == "toast":
+            self._draw_toast_state(w, h)
+        elif self.state == "recording":
+            self._draw_recording_state(w, h)
+        elif self.state == "processing":
+            self._draw_processing_state(w, h)
+        elif self.state == "result":
+            self._draw_result_state(w, h)
+
+    def _draw_close_button(self, x: float, y: float, radius: float = 11.0) -> None:
+        is_hover = self.hovered_region == "close"
+        is_press = self.pressed_region == "close"
+        if is_hover or is_press:
+            circle_fill = APPLE_BTN_ACTIVE if is_press else APPLE_BTN_BG
+            self.canvas.create_oval(
+                x - radius, y - radius, x + radius, y + radius,
+                fill=circle_fill, outline=""
+            )
+        fg = APPLE_TEXT_PRIMARY if (is_hover or is_press) else APPLE_TEXT_TERTIARY
+        self.canvas.create_text(
+            x, y, text="✕", fill=fg, font=("Segoe UI", 8, "bold")
+        )
+        self.interactive_regions["close"] = (
+            x - radius, y - radius, x + radius, y + radius, self.root.destroy
+        )
+
+    def _draw_idle_state(self, w: float, h: float) -> None:
+        cy = h / 2.0
+
+        # Orbe esquerdo com indicador de status da GPU
+        orb_x = 25.0
+        self.canvas.create_oval(
+            orb_x - 13, cy - 13, orb_x + 13, cy + 13,
+            fill=APPLE_CARD_ELEVATED, outline=APPLE_CARD_BORDER
+        )
+        dot_color = APPLE_GREEN if self.models_ready else APPLE_ORANGE
+        self.canvas.create_oval(
+            orb_x - 3.5, cy - 3.5, orb_x + 3.5, cy + 3.5,
+            fill=dot_color, outline=""
+        )
+
+        # Rótulo central com tipografia limpa
+        label_text = "Ditar comando" if self.models_ready else "Preparando motor neural..."
+        self.canvas.create_text(
+            w / 2.0 - 4,
+            cy - 0.5,
+            text=label_text,
+            fill=APPLE_TEXT_PRIMARY,
+            font=("Segoe UI Semibold", 10),
+        )
+
+        # Botão discreto de fechar à direita
+        self._draw_close_button(w - 22.0, cy)
+
+    def _draw_toast_state(self, w: float, h: float) -> None:
+        cy = h / 2.0
+        self.canvas.create_text(
+            w / 2.0 - 8,
+            cy,
+            text=self.toast_message,
+            fill=APPLE_ORANGE,
+            font=("Segoe UI Semibold", 9),
+        )
+        self._draw_close_button(w - 22.0, cy)
+
+    def _draw_recording_state(self, w: float, h: float) -> None:
+        # Cabeçalho da Dynamic Island em gravação
+        top_y = 22.0
+
+        # Waveform Apple Voice Memos (5 barras dinâmicas)
+        start_wx = 24.0
+        for i, val in enumerate(self.wave_bars):
+            bx = start_wx + i * 5.5
+            bar_h = max(4.0, val * 18.0)
+            self.canvas.create_line(
+                bx, top_y - bar_h / 2.0, bx, top_y + bar_h / 2.0,
+                fill=APPLE_RED, width=2.5, capstyle="round"
+            )
+
+        elapsed = int(time.time() - self.record_start_time)
+        mins, secs = elapsed // 60, elapsed % 60
+        self.canvas.create_text(
+            58.0,
+            top_y,
+            text=f"Ouvindo  {mins}:{secs:02d}",
+            fill=APPLE_RED,
+            anchor="w",
+            font=("Segoe UI Semibold", 9),
+        )
+
+        # Chip "Concluir" no canto superior direito
+        done_x2 = w - 38.0
+        done_x1 = done_x2 - 64.0
+        is_done_hover = self.hovered_region == "done_rec"
+        done_bg = APPLE_BTN_HOVER if is_done_hover else APPLE_CARD_ELEVATED
+        draw_apple_surface(
+            self.canvas, done_x1, top_y - 10, done_x2, top_y + 10,
+            radius=10, fill=done_bg, outline=APPLE_CARD_BORDER
+        )
+        self.canvas.create_text(
+            (done_x1 + done_x2) / 2.0, top_y,
+            text="Concluir", fill=APPLE_TEXT_PRIMARY, font=("Segoe UI Semibold", 8)
+        )
+        self.interactive_regions["done_rec"] = (
+            done_x1, top_y - 10, done_x2, top_y + 10, self._stop_audio_capture
+        )
+
+        self._draw_close_button(w - 20.0, top_y)
+
+        # Área de texto ao vivo (enquanto o usuário fala)
+        has_words = bool(self.live_transcript.strip())
+        display_text = self.live_transcript if has_words else "Fale naturalmente, suas palavras aparecem aqui..."
+        text_color = APPLE_TEXT_PRIMARY if has_words else APPLE_TEXT_SECONDARY
+
+        self.canvas.create_text(
+            22.0,
+            42.0,
+            text=display_text,
+            fill=text_color,
+            anchor="nw",
+            width=max(180, int(w - 44)),
+            font=("Segoe UI Semibold" if has_words else "Segoe UI", 10),
+        )
+
+    def _draw_processing_state(self, w: float, h: float) -> None:
+        cy = h / 2.0
+        # Indicador pulsante estilo Apple Intelligence / Siri
+        t = time.perf_counter() * 5.0
+        pulse_r = 6.5 + 1.8 * math.sin(t)
+        orb_x = 28.0
+        self.canvas.create_oval(
+            orb_x - pulse_r - 3, cy - pulse_r - 3, orb_x + pulse_r + 3, cy + pulse_r + 3,
+            fill="#191833", outline=""
+        )
+        self.canvas.create_oval(
+            orb_x - pulse_r, cy - pulse_r, orb_x + pulse_r, cy + pulse_r,
+            fill=APPLE_INDIGO, outline=APPLE_BLUE
+        )
+
+        self.canvas.create_text(
+            w / 2.0 + 6,
+            cy,
+            text="Refinando comando...",
+            fill=APPLE_TEXT_PRIMARY,
+            font=("Segoe UI Semibold", 10),
+        )
+
+    def _draw_result_state(self, w: float, h: float) -> None:
+        if w < 360 or h < 140:
+            return
+
+        # 1. Cabeçalho com confirmação de cópia automática
+        top_y = 22.0
+        badge_text = "✓ Copiado novamente" if self.copy_feedback_active else "✓ Copiado para o Ctrl+V"
+        badge_w = 152.0
+        draw_apple_surface(
+            self.canvas, 18.0, top_y - 10, 18.0 + badge_w, top_y + 10,
+            radius=10, fill=APPLE_GREEN_BG, outline="#194d2b"
+        )
+        self.canvas.create_text(
+            18.0 + badge_w / 2.0, top_y,
+            text=badge_text, fill=APPLE_GREEN, font=("Segoe UI Semibold", 8)
+        )
+
+        self._draw_close_button(w - 22.0, top_y)
+
+        # 2. Cartão Principal: Comando Refinado (Hero Card)
+        card_top = 42.0
+        card_bottom = h - 86.0
+        draw_apple_surface(
+            self.canvas,
+            x1=16.0,
+            y1=card_top,
+            x2=w - 16.0,
+            y2=card_bottom,
+            radius=16.0,
+            fill=APPLE_CARD_ELEVATED,
+            outline=APPLE_CARD_BORDER,
+            specular_top="#303038",
+        )
+
+        self.canvas.create_text(
+            28.0,
+            card_top + 12.0,
+            text=self.last_prompt_text,
+            fill=APPLE_TEXT_PRIMARY,
+            anchor="nw",
+            width=max(200, int(w - 56)),
+            font=("Segoe UI Semibold", 10),
+        )
+
+        # 3. Legenda discreta da fala original
+        raw_preview = self.last_raw_text
+        if len(raw_preview) > 78:
+            raw_preview = raw_preview[:75] + "..."
+        self.canvas.create_text(
+            20.0,
+            card_bottom + 10.0,
+            text=f"Você disse: “{raw_preview}”",
+            fill=APPLE_TEXT_SECONDARY,
+            anchor="nw",
+            width=max(200, int(w - 40)),
+            font=("Segoe UI", 8),
+        )
+
+        # 4. Barra de Ações Inferior (Botões em cápsula com resposta tátil)
+        btn_y1 = h - 44.0
+        btn_y2 = h - 14.0
+
+        # Botão Primário: Novo Ditado
+        self._draw_pill_button(
+            name="btn_new",
+            x1=16.0, y1=btn_y1, x2=142.0, y2=btn_y2,
+            label="🎙️ Novo Ditado",
+            primary=True,
+            callback=self._on_new_record_click,
+        )
+
+        # Botão Secundário: Copiar
+        self._draw_pill_button(
+            name="btn_copy",
+            x1=150.0, y1=btn_y1, x2=248.0, y2=btn_y2,
+            label="📋 Copiar",
+            primary=False,
+            callback=self._on_copy_again_click,
+        )
+
+        # Botão Terciário: Recolher à direita
+        self._draw_pill_button(
+            name="btn_collapse",
+            x1=w - 104.0, y1=btn_y1, x2=w - 16.0, y2=btn_y2,
+            label="Recolher",
+            primary=False,
+            callback=lambda: self._transition_to("idle"),
+        )
+
+    def _draw_pill_button(
+        self,
+        name: str,
+        x1: float,
+        y1: float,
+        x2: float,
+        y2: float,
+        label: str,
+        primary: bool,
+        callback: Callable[[], None],
+    ) -> None:
+        is_hover = self.hovered_region == name
+        is_press = self.pressed_region == name
+
+        # Pequena contração óptica no botão pressionado (§1 Response on pointer-down)
+        if is_press:
+            x1 += 1.5
+            y1 += 1.0
+            x2 -= 1.5
+            y2 -= 1.0
+
+        if primary:
+            fill = APPLE_BLUE_ACTIVE if is_press else (APPLE_BLUE_HOVER if is_hover else APPLE_BLUE)
+            outline = "#409cff" if is_hover else APPLE_BLUE
+        else:
+            fill = APPLE_BTN_ACTIVE if is_press else (APPLE_BTN_HOVER if is_hover else APPLE_BTN_BG)
+            outline = "#3a3a42" if is_hover else APPLE_CARD_BORDER
+
+        r = (y2 - y1) / 2.0
+        draw_apple_surface(
+            self.canvas, x1, y1, x2, y2, radius=r, fill=fill, outline=outline
+        )
+        self.canvas.create_text(
+            (x1 + x2) / 2.0,
+            (y1 + y2) / 2.0,
+            text=label,
+            fill=APPLE_TEXT_PRIMARY,
+            font=("Segoe UI Semibold", 8),
+        )
+        self.interactive_regions[name] = (x1, y1, x2, y2, callback)
+
+    # -------------------------------------------------------------------------
+    # Pipeline de Áudio, Transcrição ao Vivo e Reescrita
+    # -------------------------------------------------------------------------
+
     def _start_audio_capture(self) -> None:
+        if self.state == "processing":
+            return
+
         self.audio_chunks = []
-        self.is_recording = True
         self.live_transcript = ""
-        self.last_transcribed_len = 0
+        self.current_rms = 0.0
+        self.smoothed_rms = 0.0
         self.record_start_time = time.time()
 
-        self._show_live_recording()
-        self._update_recording_timer()
+        self._transition_to("recording")
 
-        def audio_callback(indata, frames, time_info, status):
+        def audio_callback(indata, _frames, _time_info, status):
             if status:
                 logger.warning(f"Audio status: {status}")
-            self.audio_chunks.append(indata.copy())
+            chunk = indata.copy()
+            self.audio_chunks.append(chunk)
+            self.current_rms = float(np.sqrt(np.mean(chunk ** 2)))
 
         try:
             self.audio_stream = sd.InputStream(
@@ -553,49 +906,31 @@ class LivePillApp:
                 callback=audio_callback,
             )
             self.audio_stream.start()
-            logger.info("Microfone ligado. Iniciando transcrição contínua...")
-            
-            # Inicia a thread que transcreve o áudio em tempo real enquanto você fala
-            self.live_transcribe_thread = threading.Thread(
-                target=self._live_transcribe_loop, daemon=True
-            )
-            self.live_transcribe_thread.start()
+            logger.info("Microfone ativo. Transcrição ao vivo iniciada...")
+
+            threading.Thread(target=self._live_transcribe_loop, daemon=True).start()
 
         except Exception as error:
             logger.error(f"Erro ao abrir microfone: {error}")
-            self._show_compact_pill("⚠️  Microfone indisponível")
-            self.root.after(2500, lambda: self._show_compact_pill())
-
-    def _update_recording_timer(self) -> None:
-        if self.is_recording:
-            elapsed = int(time.time() - self.record_start_time)
-            mins = elapsed // 60
-            secs = elapsed % 60
-            self.live_timer_lbl.config(text=f"🔴 Ouvindo em tempo real ({mins:02d}:{secs:02d})")
-            self.root.after(500, self._update_recording_timer)
+            self._show_toast("Microfone indisponível")
 
     def _live_transcribe_loop(self) -> None:
         """Loop que transcreve blocos de fala em tempo real na GPU com normalização de áudio."""
-        while self.is_recording:
-            time.sleep(0.55)  # Intervalo de atualização fluida
-            if not self.is_recording:
+        while self.state == "recording":
+            time.sleep(0.55)
+            if self.state != "recording":
                 break
 
             if len(self.audio_chunks) < 3:
                 continue
 
             try:
-                # Cria snapshot do áudio atual e normaliza amplitude
                 audio_snapshot = np.concatenate(list(self.audio_chunks)).flatten()
-                if len(audio_snapshot) < SAMPLE_RATE * 0.6:
-                    continue
-
-                if self.whisper_model is None:
+                if len(audio_snapshot) < SAMPLE_RATE * 0.6 or self.whisper_model is None:
                     continue
 
                 norm_audio = normalize_audio(audio_snapshot)
 
-                # Transcrição ao vivo de baixa latência
                 segments, _ = self.whisper_model.transcribe(
                     norm_audio,
                     language="pt",
@@ -618,31 +953,26 @@ class LivePillApp:
                 logger.warning(f"Aviso na transcrição ao vivo: {e}")
 
     def _stop_audio_capture(self) -> None:
-        """Encerra a gravação e dispara a reescrita com Ollama instantaneamente."""
-        self.is_recording = False
+        if self.state != "recording":
+            return
+
         if self.audio_stream:
             self.audio_stream.stop()
             self.audio_stream.close()
             self.audio_stream = None
 
         if not self.audio_chunks:
-            self._show_compact_pill()
+            self._transition_to("idle")
             return
-
-        self.is_processing = True
-        self._show_compact_pill(
-            "✨  Estruturando pedido...",
-            bg_col="#0c1b2e", border_col="#0284c7", text_col="#7dd3fc"
-        )
 
         final_audio = np.concatenate(self.audio_chunks).flatten()
         duration_s = len(final_audio) / SAMPLE_RATE
 
         if duration_s < 0.4:
-            self.is_processing = False
-            self._show_compact_pill("⚠️  Fala muito curta")
-            self.root.after(2000, lambda: self._show_compact_pill())
+            self._show_toast("Fala muito curta")
             return
+
+        self._transition_to("processing")
 
         threading.Thread(
             target=self._final_pipeline_worker,
@@ -653,6 +983,14 @@ class LivePillApp:
     def _final_pipeline_worker(self, audio_data: np.ndarray) -> None:
         """Executa a transcrição final completa com alta precisão e aciona a reescrita rápida."""
         try:
+            # Aguarda caso o usuário tenha falado nos primeiros 2s antes do modelo terminar de subir na GPU
+            wait_ticks = 0
+            while self.whisper_model is None and wait_ticks < 60:
+                time.sleep(0.1)
+                wait_ticks += 1
+            if self.whisper_model is None:
+                self.whisper_model = self._instantiate_whisper()
+
             norm_audio = normalize_audio(audio_data)
             logger.info("Executando transcrição final completa com Whisper de alta precisão...")
             t_w = time.time()
@@ -680,12 +1018,11 @@ class LivePillApp:
             llm_output = fast_call_ollama(raw_text)
             logger.info(f"Ollama respondeu em {time.time()-t0:.2f}s")
 
-            pedido, duvidas = parse_llm_response(llm_output)
+            pedido, _ = parse_llm_response(llm_output)
             final_prompt = pedido if (pedido and pedido.lower() != "nenhuma") else llm_output
 
-            # Copia imediatamente para o Ctrl+V
             pyperclip.copy(final_prompt)
-            logger.info(f"Prompt pronto copiado para a área de transferência!")
+            logger.info("Prompt pronto copiado para a área de transferência!")
 
             self.ui_queue.put(("success", (raw_text, final_prompt)))
 
@@ -693,51 +1030,74 @@ class LivePillApp:
             logger.error(f"Erro no pipeline final: {error}")
             self.ui_queue.put(("error", "Falha ao processar"))
 
+    def _show_toast(self, message: str) -> None:
+        self._transition_to("toast", toast_text=message)
+        self.root.after(2200, lambda: self._transition_to("idle") if self.state == "toast" else None)
+
     def _start_queue_listener(self) -> None:
         try:
             while not self.ui_queue.empty():
                 msg_type, payload = self.ui_queue.get_nowait()
-                if msg_type == "live_update":
-                    # Atualiza o texto na tela em tempo real enquanto fala
-                    self.live_text_lbl.config(text=payload, fg="#ffffff")
+                if msg_type == "live_update" and self.state == "recording":
+                    # Expande suavemente a altura da Dynamic Island se a fala for longa
+                    lines = max(1, math.ceil(len(payload) / 48))
+                    target_h = min(190.0, max(118.0, 68.0 + lines * 22.0))
+                    self.spring_h.set_target(target_h, damping=1.0, response=0.28)
+                elif msg_type == "models_ready":
+                    self.models_ready = True
+                    self._render_canvas()
                 elif msg_type == "success":
-                    self.is_processing = False
                     raw_text, prompt_text = payload
-                    self._show_expanded_results(raw_text, prompt_text)
+                    self.last_raw_text = raw_text
+                    self.last_prompt_text = prompt_text
+                    self._transition_to("result")
                 elif msg_type == "error":
-                    self.is_processing = False
-                    self._show_compact_pill(f"⚠️  {payload}")
-                    self.root.after(2500, lambda: self._show_compact_pill())
+                    self._show_toast(str(payload))
         except Exception:
             pass
 
-        self.root.after(80, self._start_queue_listener)
+        self.root.after(60, self._start_queue_listener)
 
     def _on_new_record_click(self) -> None:
-        self._show_compact_pill()
-        self._toggle_recording()
+        self._start_audio_capture()
 
     def _on_copy_again_click(self) -> None:
         if self.last_prompt_text:
             pyperclip.copy(self.last_prompt_text)
-            self.badge_status.config(text="✓ Recopiado com sucesso!")
-            self.root.after(2000, lambda: self.badge_status.config(text="✓ Copiado para o Ctrl+V"))
+            self.copy_feedback_active = True
+            self._render_canvas()
+            self.root.after(
+                1800,
+                lambda: (setattr(self, "copy_feedback_active", False), self._render_canvas()),
+            )
+
+    def _instantiate_whisper(self) -> WhisperModel:
+        """Instancia o Whisper priorizando o cache local para evitar falhas ou latência de rede."""
+        try:
+            return WhisperModel(
+                LIVE_WHISPER_MODEL,
+                device=WHISPER_DEVICE,
+                compute_type=WHISPER_COMPUTE_TYPE,
+                local_files_only=True,
+            )
+        except Exception:
+            return WhisperModel(
+                LIVE_WHISPER_MODEL,
+                device=WHISPER_DEVICE,
+                compute_type=WHISPER_COMPUTE_TYPE,
+                local_files_only=False,
+            )
 
     def _load_models_in_background(self) -> None:
-        """Carrega e aquece Whisper e Ollama na GPU em background para eliminar qualquer delay."""
-        def load_whisper():
+        """Carrega e aquece Whisper e Ollama na GPU em background."""
+        def init_all():
             try:
                 logger.info(f"Pré-carregando Whisper '{LIVE_WHISPER_MODEL}' na GPU...")
-                self.whisper_model = WhisperModel(
-                    LIVE_WHISPER_MODEL,
-                    device=WHISPER_DEVICE,
-                    compute_type=WHISPER_COMPUTE_TYPE,
-                )
+                self.whisper_model = self._instantiate_whisper()
                 logger.info(f"Whisper '{LIVE_WHISPER_MODEL}' aquecido e pronto na GPU!")
             except Exception as e:
                 logger.warning(f"Aviso no carregamento do Whisper: {e}")
 
-        def warmup_ollama():
             try:
                 logger.info(f"Pré-aquecendo Ollama '{FAST_OLLAMA_MODEL}' na memória da GPU...")
                 t0 = time.time()
@@ -746,17 +1106,18 @@ class LivePillApp:
             except Exception as e:
                 logger.warning(f"Aviso no pré-aquecimento do Ollama: {e}")
 
-        threading.Thread(target=load_whisper, daemon=True).start()
-        threading.Thread(target=warmup_ollama, daemon=True).start()
+            self.ui_queue.put(("models_ready", True))
+
+        threading.Thread(target=init_all, daemon=True).start()
 
 
 def main() -> None:
     root = tk.Tk()
-    app = LivePillApp(root)
-    print("\n>>> Pílula Translúcida com Transcrição ao Vivo Ativa!")
+    _app = LivePillApp(root)
+    print("\n>>> Dynamic Island (Apple Fluid Design) Ativa!")
     print(f"    - Modelo de Fala: Whisper '{LIVE_WHISPER_MODEL}' (GPU RTX 4050)")
     print(f"    - Modelo de Reescrita: Ollama '{FAST_OLLAMA_MODEL}' (Ultra Rápido)")
-    print("    - As palavras aparecem na tela ENQUANTO você fala.")
+    print("    - Física de molas contínuas (60 FPS), ondas reativas de voz e projeção de momento.")
     print("    - Prompt refinado copiado instantaneamente para o Ctrl+V.\n")
     root.mainloop()
 
