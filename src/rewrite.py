@@ -12,8 +12,10 @@ import argparse
 import json
 import logging
 import re
+import subprocess
 import sys
 import textwrap
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -66,12 +68,50 @@ PEDIDO: <texto reescrito, na primeira pessoa>
 DÚVIDAS: <lista do que ficou ambíguo ou faltando, ou "nenhuma">"""
 
 
+def ensure_ollama_running(host: str = OLLAMA_HOST) -> bool:
+    """Verifica se o servidor Ollama está respondendo; se não, inicia em background silencioso (headless)."""
+    try:
+        req = urllib.request.Request(f"{host.rstrip('/')}/api/tags")
+        with urllib.request.urlopen(req, timeout=1.0) as res:
+            if res.status == 200:
+                return True
+    except Exception:
+        pass
+
+    logger.info("Ollama não está aberto. Iniciando serviço em segundo plano (silencioso)...")
+    try:
+        flags = 0
+        if sys.platform == "win32":
+            flags = subprocess.CREATE_NO_WINDOW
+
+        subprocess.Popen(
+            ["ollama", "serve"],
+            creationflags=flags,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+        for _ in range(24):
+            time.sleep(0.5)
+            try:
+                with urllib.request.urlopen(f"{host.rstrip('/')}/api/tags", timeout=1.0) as res:
+                    if res.status == 200:
+                        logger.info("Servidor Ollama ativo e respondendo em segundo plano!")
+                        return True
+            except Exception:
+                pass
+    except Exception as exc:
+        logger.warning(f"Não foi possível iniciar o Ollama automaticamente: {exc}")
+
+    return False
+
+
 def call_ollama(
     text: str,
     model: str = OLLAMA_MODEL,
     temperature: float = OLLAMA_TEMPERATURE,
 ) -> str:
-    """Chama a API do Ollama enviando o texto da transcricao com temperature 0.1."""
+    """Chama a API do Ollama enviando o texto da transcricao com auto-start silencioso."""
     endpoint = f"{OLLAMA_HOST.rstrip('/')}/api/chat"
     payload = {
         "model": model,
@@ -93,18 +133,24 @@ def call_ollama(
         method="POST",
     )
 
+    def _execute():
+        with urllib.request.urlopen(request, timeout=120) as response:
+            data = json.loads(response.read().decode("utf-8"))
+            return data.get("message", {}).get("content", "").strip()
+
     try:
         logger.info(
             f"Chamando Ollama ({model}) em {OLLAMA_HOST} com temperature={temperature}..."
         )
-        with urllib.request.urlopen(request, timeout=120) as response:
-            data = json.loads(response.read().decode("utf-8"))
-            return data.get("message", {}).get("content", "").strip()
-    except urllib.error.URLError as error:
+        return _execute()
+    except (urllib.error.URLError, ConnectionError):
+        # Se o Ollama estava desligado, inicia silenciosamente e retenta
+        if ensure_ollama_running():
+            return _execute()
         logger.error(
-            f"Erro ao conectar ao Ollama ({OLLAMA_HOST}). O serviço do Ollama está rodando?"
+            f"Erro ao conectar ao Ollama ({OLLAMA_HOST}). O serviço do Ollama está instalado?"
         )
-        raise error
+        raise
 
 
 def parse_llm_response(response_text: str) -> Tuple[str, str]:

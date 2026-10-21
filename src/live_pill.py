@@ -13,6 +13,7 @@ import logging
 import math
 import os
 import queue
+import subprocess
 import sys
 import threading
 import time
@@ -230,8 +231,46 @@ def draw_apple_surface(
         )
 
 
+def ensure_ollama_running(host: str = OLLAMA_HOST) -> bool:
+    """Verifica se o servidor Ollama está respondendo; se não, inicia em background silencioso (headless)."""
+    try:
+        req = urllib.request.Request(f"{host.rstrip('/')}/api/tags")
+        with urllib.request.urlopen(req, timeout=1.0) as res:
+            if res.status == 200:
+                return True
+    except Exception:
+        pass
+
+    logger.info("Ollama não está aberto. Iniciando serviço em segundo plano (silencioso)...")
+    try:
+        flags = 0
+        if sys.platform == "win32":
+            flags = subprocess.CREATE_NO_WINDOW
+
+        subprocess.Popen(
+            ["ollama", "serve"],
+            creationflags=flags,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+        for _ in range(24):
+            time.sleep(0.5)
+            try:
+                with urllib.request.urlopen(f"{host.rstrip('/')}/api/tags", timeout=1.0) as res:
+                    if res.status == 200:
+                        logger.info("Servidor Ollama ativo e respondendo em segundo plano!")
+                        return True
+            except Exception:
+                pass
+    except Exception as exc:
+        logger.warning(f"Não foi possível iniciar o Ollama automaticamente: {exc}")
+
+    return False
+
+
 def fast_call_ollama(text: str) -> str:
-    """Chamada ultra-otimizada ao Ollama: keep_alive em VRAM e retorno imperativo direto."""
+    """Chamada ultra-otimizada ao Ollama: auto-start silencioso, keep_alive em VRAM e retorno imperativo direto."""
     endpoint = f"{OLLAMA_HOST.rstrip('/')}/api/chat"
     system_prompt = (
         "Você é um especialista em Prompt Engineering. "
@@ -266,13 +305,22 @@ def fast_call_ollama(text: str) -> str:
         method="POST",
     )
 
-    with urllib.request.urlopen(request, timeout=30) as response:
-        data = json.loads(response.read().decode("utf-8"))
-        raw_output = data.get("message", {}).get("content", "").strip()
-        for prefix in ["PEDIDO:", "Prompt:", "prompt:"]:
-            if raw_output.startswith(prefix):
-                raw_output = raw_output[len(prefix):].strip()
-        return raw_output
+    def _execute():
+        with urllib.request.urlopen(request, timeout=30) as response:
+            data = json.loads(response.read().decode("utf-8"))
+            raw_output = data.get("message", {}).get("content", "").strip()
+            for prefix in ["PEDIDO:", "Prompt:", "prompt:"]:
+                if raw_output.startswith(prefix):
+                    raw_output = raw_output[len(prefix):].strip()
+            return raw_output
+
+    try:
+        return _execute()
+    except (urllib.error.URLError, ConnectionError):
+        # Se o Ollama estava desligado, tenta iniciar silenciosamente em background e retenta
+        if ensure_ollama_running():
+            return _execute()
+        raise
 
 
 class LivePillApp:
