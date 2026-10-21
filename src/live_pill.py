@@ -63,9 +63,28 @@ logger = logging.getLogger("live_pill")
 SAMPLE_RATE = 16000
 KEY_COLOR = "#000001"  # Cor chave para transparência no Windows
 
-# Modelos ultra-rápidos para interação desktop em tempo real
-LIVE_WHISPER_MODEL = os.getenv("LIVE_WHISPER_MODEL", "small")
+# Modelos ultra-rápidos e precisos para interação desktop em tempo real
+LIVE_WHISPER_MODEL = os.getenv("LIVE_WHISPER_MODEL", "medium")
 FAST_OLLAMA_MODEL = os.getenv("LIVE_OLLAMA_MODEL", LIVE_OLLAMA_MODEL)
+
+# Prompt de contexto para calibrar o vocabulário técnico do Whisper em português
+TECH_INITIAL_PROMPT = (
+    "Transcrição em português brasileiro com pontuação precisa e vocabulário técnico: "
+    "Python, SQL, PostgreSQL, Docker, FastAPI, React, JavaScript, TypeScript, Linux, "
+    "Git, API REST, banco de dados, função, query, pipeline, script, frontend, backend."
+)
+
+
+def normalize_audio(audio: np.ndarray) -> np.ndarray:
+    """Remove ruído de bias DC e normaliza volume para faixa ideal de escuta do Whisper."""
+    if len(audio) == 0:
+        return audio
+    # Remove componente DC (bias contínuo do microfone)
+    audio = audio - np.mean(audio)
+    peak = np.max(np.abs(audio))
+    if peak > 0.01:
+        audio = (audio / peak) * 0.95
+    return audio.astype(np.float32)
 
 
 def draw_smooth_round_rect(
@@ -556,34 +575,38 @@ class LivePillApp:
             self.root.after(500, self._update_recording_timer)
 
     def _live_transcribe_loop(self) -> None:
-        """Loop que transcreve blocos de fala em tempo real na GPU."""
+        """Loop que transcreve blocos de fala em tempo real na GPU com normalização de áudio."""
         while self.is_recording:
-            time.sleep(0.65)  # Intervalo de atualização fluida
+            time.sleep(0.55)  # Intervalo de atualização fluida
             if not self.is_recording:
                 break
 
-            if len(self.audio_chunks) < 4:
+            if len(self.audio_chunks) < 3:
                 continue
 
             try:
-                # Cria snapshot do áudio atual
+                # Cria snapshot do áudio atual e normaliza amplitude
                 audio_snapshot = np.concatenate(list(self.audio_chunks)).flatten()
-                if len(audio_snapshot) < SAMPLE_RATE * 0.7:
+                if len(audio_snapshot) < SAMPLE_RATE * 0.6:
                     continue
 
                 if self.whisper_model is None:
                     continue
 
-                # Transcrição ultra-rápida (beam_size=1, sem timestamps, vad_filter)
+                norm_audio = normalize_audio(audio_snapshot)
+
+                # Transcrição ao vivo de baixa latência
                 segments, _ = self.whisper_model.transcribe(
-                    audio_snapshot,
+                    norm_audio,
                     language="pt",
                     beam_size=1,
                     best_of=1,
                     temperature=0.0,
+                    initial_prompt=TECH_INITIAL_PROMPT,
                     condition_on_previous_text=False,
                     without_timestamps=True,
                     vad_filter=True,
+                    vad_parameters=dict(min_silence_duration_ms=300, speech_pad_ms=200),
                 )
                 partial_text = " ".join(s.text.strip() for s in segments).strip()
 
@@ -615,7 +638,7 @@ class LivePillApp:
         final_audio = np.concatenate(self.audio_chunks).flatten()
         duration_s = len(final_audio) / SAMPLE_RATE
 
-        if duration_s < 0.5:
+        if duration_s < 0.4:
             self.is_processing = False
             self._show_compact_pill("⚠️  Fala muito curta")
             self.root.after(2000, lambda: self._show_compact_pill())
@@ -623,34 +646,36 @@ class LivePillApp:
 
         threading.Thread(
             target=self._final_pipeline_worker,
-            args=(final_audio, self.live_transcript),
+            args=(final_audio,),
             daemon=True,
         ).start()
 
-    def _final_pipeline_worker(self, audio_data: np.ndarray, last_live_text: str) -> None:
-        """Finaliza a transcrição se necessário e aciona a reescrita rápida."""
+    def _final_pipeline_worker(self, audio_data: np.ndarray) -> None:
+        """Executa a transcrição final completa com alta precisão e aciona a reescrita rápida."""
         try:
-            # Se a transcrição ao vivo já pegou a fala, reutiliza diretamente economizando tempo
-            raw_text = last_live_text
-            if not raw_text or len(raw_text) < 5:
-                logger.info("Executando passe final de transcrição...")
-                segments, _ = self.whisper_model.transcribe(
-                    audio_data,
-                    language="pt",
-                    beam_size=1,
-                    without_timestamps=True,
-                    vad_filter=True,
-                )
-                raw_text = " ".join(s.text.strip() for s in segments).strip()
+            norm_audio = normalize_audio(audio_data)
+            logger.info("Executando transcrição final completa com Whisper de alta precisão...")
+            t_w = time.time()
+            segments, _ = self.whisper_model.transcribe(
+                norm_audio,
+                language="pt",
+                beam_size=3,
+                best_of=3,
+                temperature=0.0,
+                initial_prompt=TECH_INITIAL_PROMPT,
+                condition_on_previous_text=False,
+                without_timestamps=True,
+                vad_filter=True,
+                vad_parameters=dict(min_silence_duration_ms=400, speech_pad_ms=300),
+            )
+            raw_text = " ".join(s.text.strip() for s in segments).strip()
+            logger.info(f"Transcrição concluída em {time.time()-t_w:.2f}s: \"{raw_text}\"")
 
             if not raw_text:
                 self.ui_queue.put(("error", "Nenhuma fala detectada"))
                 return
 
-            logger.info(f"Fala final: \"{raw_text}\"")
             logger.info("Reescrevendo com Ollama em modo otimizado...")
-            
-            # Chamada otimizada ao Ollama
             t0 = time.time()
             llm_output = fast_call_ollama(raw_text)
             logger.info(f"Ollama respondeu em {time.time()-t0:.2f}s")

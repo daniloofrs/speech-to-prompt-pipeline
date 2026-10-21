@@ -91,6 +91,14 @@ def load_whisper_model() -> WhisperModel:
         raise error
 
 
+# Prompt de contexto para calibrar o vocabulário técnico do Whisper em português
+TECH_INITIAL_PROMPT = (
+    "Transcrição em português brasileiro com pontuação precisa e vocabulário técnico: "
+    "Python, SQL, PostgreSQL, Docker, FastAPI, React, JavaScript, TypeScript, Linux, "
+    "Git, API REST, banco de dados, função, query, pipeline, script, frontend, backend."
+)
+
+
 def transcribe_audio(
     model: WhisperModel, audio_path: Path
 ) -> Tuple[str, str, float]:
@@ -104,6 +112,7 @@ def transcribe_audio(
             str(audio_path),
             language="pt",
             beam_size=5,
+            initial_prompt=TECH_INITIAL_PROMPT,
         )
 
         collected_text = []
