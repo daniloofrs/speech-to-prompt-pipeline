@@ -13,8 +13,11 @@ $Shortcut.TargetPath = "wscript.exe"
 $Shortcut.Arguments = "`"$VbsPath`""
 $Shortcut.WorkingDirectory = $ProjectDir
 
-# Ícone nativo elegante do Windows (microfone/áudio em imageres.dll)
-if (Test-Path "$env:SystemRoot\System32\imageres.dll") {
+# Ícone oficial personalizado em alta resolução do aplicativo
+$CustomIcon = Join-Path $ProjectDir "assets\app-icon.ico"
+if (Test-Path $CustomIcon) {
+    $Shortcut.IconLocation = "$CustomIcon,0"
+} elseif (Test-Path "$env:SystemRoot\System32\imageres.dll") {
     $Shortcut.IconLocation = "$env:SystemRoot\System32\imageres.dll,99"
 }
 

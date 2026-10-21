@@ -100,6 +100,8 @@ def render_html_dashboard(data: dict) -> str:
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Speech-to-Prompt Pipeline | Apple Fluid Dashboard</title>
+    <link rel="icon" type="image/x-icon" href="/favicon.ico">
+    <link rel="icon" type="image/png" href="/assets/app-icon.png">
     <style>
         :root {{
             font: 100%/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI Variable Display", system-ui, sans-serif;
@@ -393,9 +395,12 @@ def render_html_dashboard(data: dict) -> str:
 <body>
     <div class="container">
         <header>
-            <div class="title-group">
-                <h1>Speech-to-Prompt Pipeline</h1>
-                <p>Monitoramento de Qualidade & Telemetria de Engenharia de Dados</p>
+            <div class="title-group" style="display: flex; align-items: center; gap: 14px;">
+                <img src="/assets/app-icon.png" alt="Logo" style="width: 44px; height: 44px; border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.16); box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5); object-fit: cover;" />
+                <div>
+                    <h1>Speech-to-Prompt Pipeline</h1>
+                    <p>Monitoramento de Qualidade & Telemetria de Engenharia de Dados</p>
+                </div>
             </div>
             <div class="tags">
                 <span class="tag">PostgreSQL 16</span>
@@ -720,10 +725,35 @@ def render_html_dashboard(data: dict) -> str:
 
 
 class DashboardRequestHandler(http.server.BaseHTTPRequestHandler):
-    """Handler HTTP para servir a interface do dashboard."""
+    """Handler HTTP para servir a interface do dashboard e ativos estáticos."""
 
     def do_GET(self) -> None:
         try:
+            # Servico de ativos estaticos (imagens, icones)
+            if self.path.startswith("/assets/"):
+                asset_path = PROJECT_ROOT / self.path.lstrip("/")
+                if asset_path.exists() and asset_path.is_file():
+                    content_type = "image/png" if asset_path.suffix == ".png" else "application/octet-stream"
+                    with open(asset_path, "rb") as f:
+                        content = f.read()
+                    self.send_response(200)
+                    self.send_header("Content-Type", content_type)
+                    self.send_header("Content-Length", str(len(content)))
+                    self.end_headers()
+                    self.wfile.write(content)
+                    return
+            elif self.path == "/favicon.ico":
+                icon_path = PROJECT_ROOT / "assets" / "app-icon.ico"
+                if icon_path.exists():
+                    with open(icon_path, "rb") as f:
+                        content = f.read()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "image/x-icon")
+                    self.send_header("Content-Length", str(len(content)))
+                    self.end_headers()
+                    self.wfile.write(content)
+                    return
+
             data = get_dashboard_data()
             html_content = render_html_dashboard(data).encode("utf-8")
 

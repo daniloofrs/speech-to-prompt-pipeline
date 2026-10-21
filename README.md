@@ -1,3 +1,11 @@
+<p align="center">
+  <img src="assets/hero-banner.png" alt="Speech-to-Prompt Pipeline & Live Dynamic Island" width="100%" />
+</p>
+
+<p align="center">
+  <img src="assets/app-icon.png" alt="Speech to Prompt App Logo" width="96" height="96" style="border-radius: 22px; box-shadow: 0 8px 24px rgba(0,0,0,0.6);" />
+</p>
+
 # 🎙️ Speech-to-Prompt Pipeline & Dynamic Island
 
 <p align="center">
@@ -8,6 +16,7 @@
   <img src="https://img.shields.io/badge/ASR-Faster--Whisper%20Medium-orange" alt="Faster-Whisper" />
   <img src="https://img.shields.io/badge/Local%20LLM-Ollama%20Qwen2.5-black?logo=ollama&logoColor=white" alt="Ollama" />
   <img src="https://img.shields.io/badge/UI-Apple%20Fluid%20Design-grey?logo=apple&logoColor=white" alt="Apple Design" />
+  <img src="https://img.shields.io/badge/Design-Google%20Nano%20Banana-yellow?logo=google&logoColor=white" alt="Google Nano Banana" />
 </p>
 
 > **Pipeline de Engenharia de Dados & LLMOps com Widget Desktop Estilo Apple Dynamic Island:** Ingestão de áudios em português, transcrição em tempo real com Whisper acelerado por GPU, reescrita estruturada de prompts via LLM local (Ollama), governança com métricas de qualidade persistidas em PostgreSQL e pílula desktop fluida com física de molas (Springs a 60 FPS) e cópia instantânea para o `Ctrl + V`.
@@ -37,6 +46,10 @@ Este projeto aborda o problema sob duas perspectivas complementares de **Engenha
 ---
 
 ## 🏗️ Arquitetura do Sistema
+
+<p align="center">
+  <img src="assets/pipeline-isometric.png" alt="Arquitetura 3D do Pipeline" width="100%" />
+</p>
 
 ```mermaid
 flowchart TD
@@ -183,6 +196,10 @@ As migrações SQL na pasta `sql/` são executadas automaticamente no primeiro b
 ### Modo 1: Dynamic Island Desktop (Uso Rápido no Dia a Dia)
 Para ditar comandos de programação enquanto você navega ou desenvolve e colá-los direto no seu editor ou chat de IA:
 
+<p align="center">
+  <img src="assets/showcase-setup.png" alt="Dynamic Island em Setup de Desenvolvimento" width="100%" />
+</p>
+
 #### Opção A: 1 Clique na Área de Trabalho (Recomendado - Zero Terminal)
 - Dê dois cliques no atalho **`Speech to Prompt`** na sua Área de Trabalho (criado automaticamente via `tools/criar_atalho.ps1`).
 - O assistente sobe 100% silencioso em segundo plano através do `pythonw.exe` **sem nenhuma janela de terminal aberta**.
@@ -233,6 +250,11 @@ python src/evaluate.py --summary
 
 #### Passo 4: Dashboard Analítico Web (com SVG Liquid Glass Shader)
 Inicie o servidor de telemetria nativo com interface refrativa baseada em shaders ópticos:
+
+<p align="center">
+  <img src="assets/liquid-glass-macro.png" alt="Macro Refração Liquid Glass" width="100%" />
+</p>
+
 ```powershell
 python src/dashboard.py --open
 ```
@@ -247,6 +269,13 @@ python src/dashboard.py --open
 
 ```text
 speech-to-prompt-pipeline/
+├── assets/                  # Identidade visual e design do app (Google Nano Banana)
+│   ├── app-icon.ico         # Ícone oficial em múltiplos formatos para Windows (.lnk)
+│   ├── app-icon.png         # Logotipo oficial em squircle (Favicon & Avatar)
+│   ├── hero-banner.png      # Capa panorâmica widescreen para o GitHub
+│   ├── liquid-glass-macro.png # Macro da refração óptica SVG
+│   ├── pipeline-isometric.png # Infográfico 3D isométrico da arquitetura
+│   └── showcase-setup.png   # Mockup do assistente no setup de desenvolvedor
 ├── data/
 │   └── samples/             # Amostras de teste locais (.wav, .mp3)
 ├── sql/
