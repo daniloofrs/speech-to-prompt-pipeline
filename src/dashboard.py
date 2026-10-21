@@ -301,19 +301,19 @@ def render_html_dashboard(data: dict) -> str:
             left: 50%;
             transform: translateX(-50%);
             z-index: 1000;
-            width: 440px;
+            width: 480px;
             max-width: calc(100vw - 32px);
-            padding: 10px 18px;
+            padding: 9px 18px;
             border-radius: 9999px;
             cursor: grab;
             user-select: none;
             touch-action: none;
-            background: rgba(18, 18, 22, 0.48);
-            backdrop-filter: url(#liquid-glass-filter) blur(0.25px) contrast(1.15) brightness(1.04) saturate(1.18);
-            -webkit-backdrop-filter: url(#liquid-glass-filter) blur(0.25px) contrast(1.15) brightness(1.04) saturate(1.18);
-            border: 1px solid rgba(255, 255, 255, 0.16);
-            border-top: 1px solid rgba(255, 255, 255, 0.45);
-            box-shadow: 0 20px 48px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255, 255, 255, 0.08), inset 0 1px 2px rgba(255, 255, 255, 0.4);
+            background: rgba(18, 18, 22, 0.42);
+            backdrop-filter: url(#liquid-glass-filter) blur(0.2px) contrast(1.06) brightness(1.02) saturate(1.12);
+            -webkit-backdrop-filter: url(#liquid-glass-filter) blur(0.2px) contrast(1.06) brightness(1.02) saturate(1.12);
+            border: 1px solid rgba(255, 255, 255, 0.14);
+            border-top: 1px solid rgba(255, 255, 255, 0.38);
+            box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.06), inset 0 1px 1px rgba(255, 255, 255, 0.3);
             display: flex;
             align-items: center;
             justify-content: space-between;
@@ -322,14 +322,14 @@ def render_html_dashboard(data: dict) -> str:
         }}
         .liquid-island:active {{
             cursor: grabbing;
-            box-shadow: 0 28px 64px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.22);
+            box-shadow: 0 24px 54px rgba(0, 0, 0, 0.72), 0 0 0 1px rgba(255, 255, 255, 0.18);
         }}
         .liquid-island.no-svg {{
             backdrop-filter: blur(24px) saturate(180%) !important;
             -webkit-backdrop-filter: blur(24px) saturate(180%) !important;
         }}
         .liquid-island.expanded {{
-            width: 580px;
+            width: 590px;
             border-radius: 28px;
             padding: 16px 22px;
         }}
@@ -456,7 +456,7 @@ def render_html_dashboard(data: dict) -> str:
         <defs>
             <filter id="liquid-glass-filter" filterUnits="userSpaceOnUse" x="0" y="0" width="100%" height="100%" color-interpolation-filters="sRGB">
                 <feImage id="liquid-fe-image" href="" result="displacementMap" preserveAspectRatio="none" />
-                <feDisplacementMap id="liquid-fe-disp" in="SourceGraphic" in2="displacementMap" xChannelSelector="R" yChannelSelector="G" scale="32" result="displaced" />
+                <feDisplacementMap id="liquid-fe-disp" in="SourceGraphic" in2="displacementMap" xChannelSelector="R" yChannelSelector="G" scale="10" result="displaced" />
             </filter>
         </defs>
     </svg>
@@ -469,12 +469,21 @@ def render_html_dashboard(data: dict) -> str:
         </div>
         <div class="island-controls">
             <button type="button" class="island-btn active" id="toggleRefractBtn" title="Alternar entre Refração Óptica SVG e Blur Padrão">Refração: ON</button>
+            <button type="button" class="island-btn" id="intensityBtn" title="Alternar intensidade da refração (Sutil, Média ou Forte)">Grau: Sutil</button>
             <button type="button" class="island-btn" id="resizeIslandBtn" title="Alternar tamanho da lente">Expandir</button>
         </div>
     </div>
 
     <script>
         (function() {{
+            // Níveis de refração calibrados (padrão 'Sutil' para acabamento óptico cristalino e não-invasivo)
+            const INTENSITIES = [
+                {{ name: 'Sutil', scale: 10, scaleExp: 13, bevel: 8, bevelExp: 10, factor: 60 }},
+                {{ name: 'Média', scale: 16, scaleExp: 20, bevel: 12, bevelExp: 14, factor: 85 }},
+                {{ name: 'Forte', scale: 24, scaleExp: 30, bevel: 16, bevelExp: 18, factor: 110 }}
+            ];
+            let currentIntensityIdx = 0; // Inicia em Sutil conforme solicitado
+
             // Algoritmo matematico de Signed Distance Field (SDF) para retangulo arredondado (Shu Ding)
             function roundedRectSDF(x, y, w, h, r) {{
                 const qx = Math.abs(x) - w + r;
@@ -483,7 +492,7 @@ def render_html_dashboard(data: dict) -> str:
             }}
 
             // Geracao do mapa de deslocamento optico em Canvas 2D
-            function createDisplacementMap(width, height, radius, bevel) {{
+            function createDisplacementMap(width, height, radius, bevel, normalFactor) {{
                 const canvas = document.createElement('canvas');
                 canvas.width = Math.max(1, width);
                 canvas.height = Math.max(1, height);
@@ -494,7 +503,8 @@ def render_html_dashboard(data: dict) -> str:
                 const halfW = canvas.width / 2;
                 const halfH = canvas.height / 2;
                 const r = Math.min(radius, halfW, halfH);
-                const b = Math.max(4, Math.min(bevel, halfH * 0.9));
+                // Borda de bisel contida para manter o centro da lente perfeitamente legivel
+                const b = Math.max(3, Math.min(bevel, halfH * 0.45));
 
                 for (let y = 0; y < canvas.height; y++) {{
                     for (let x = 0; x < canvas.width; x++) {{
@@ -504,30 +514,30 @@ def render_html_dashboard(data: dict) -> str:
                         const dist = roundedRectSDF(px, py, halfW, halfH, r);
 
                         if (dist > 0) {{
-                            // Fora do retangulo arredondado - sem deslocamento e transparente
+                            // Fora do contorno - sem deslocamento e transparente
                             data[idx] = 128;
                             data[idx + 1] = 128;
                             data[idx + 2] = 128;
                             data[idx + 3] = 0;
                         }} else if (dist >= -b) {{
-                            // Faixa de curvatura da borda (borda refrativa de vidro)
+                            // Apenas na faixa perimetral da lente (borda refrativa suave)
                             const dx = roundedRectSDF(px + 1, py, halfW, halfH, r) - roundedRectSDF(px - 1, py, halfW, halfH, r);
                             const dy = roundedRectSDF(px, py + 1, halfW, halfH, r) - roundedRectSDF(px, py - 1, halfW, halfH, r);
                             const len = Math.hypot(dx, dy) || 1;
                             const nx = dx / len;
                             const ny = dy / len;
 
-                            // Perfil senoidal da curvatura optica da lente
+                            // Curva suave de amortecimento senoidal
                             const depth = (dist + b) / b; // 0 no interior, 1 na extremidade
-                            const factor = Math.sin(depth * Math.PI * 0.5);
+                            const factor = Math.sin(depth * Math.PI * 0.5) * normalFactor;
 
-                            // Codifica nos canais R (deslocamento X) e G (deslocamento Y), centralizado em 128 (0 offset)
-                            data[idx] = Math.round(128 + nx * factor * 115);
-                            data[idx + 1] = Math.round(128 + ny * factor * 115);
+                            // Codifica nos canais R (deslocamento X) e G (deslocamento Y), centralizado em 128
+                            data[idx] = Math.round(128 + nx * factor);
+                            data[idx + 1] = Math.round(128 + ny * factor);
                             data[idx + 2] = 128;
                             data[idx + 3] = 255;
                         }} else {{
-                            // Centro plano da lente - passagem sem distorcao
+                            // Centro amplo e plano da lente - passagem sem qualquer distorcao (leitura nitida)
                             data[idx] = 128;
                             data[idx + 1] = 128;
                             data[idx + 2] = 128;
@@ -545,6 +555,7 @@ def render_html_dashboard(data: dict) -> str:
             const feImage = document.getElementById('liquid-fe-image');
             const feDisp = document.getElementById('liquid-fe-disp');
             const toggleBtn = document.getElementById('toggleRefractBtn');
+            const intensityBtn = document.getElementById('intensityBtn');
             const resizeBtn = document.getElementById('resizeIslandBtn');
 
             function updateShader() {{
@@ -554,9 +565,13 @@ def render_html_dashboard(data: dict) -> str:
                 const h = Math.round(rect.height);
                 const isExp = island.classList.contains('expanded');
                 const radius = isExp ? 28 : h / 2;
-                const bevel = isExp ? 24 : Math.min(22, h * 0.45);
 
-                const dataUrl = createDisplacementMap(w, h, radius, bevel);
+                const cfg = INTENSITIES[currentIntensityIdx];
+                const activeScale = isExp ? cfg.scaleExp : cfg.scale;
+                const activeBevel = isExp ? cfg.bevelExp : cfg.bevel;
+                const activeFactor = cfg.factor;
+
+                const dataUrl = createDisplacementMap(w, h, radius, activeBevel, activeFactor);
 
                 filter.setAttribute('x', '0');
                 filter.setAttribute('y', '0');
@@ -567,7 +582,7 @@ def render_html_dashboard(data: dict) -> str:
                 feImage.setAttribute('height', h + 'px');
                 feImage.setAttribute('href', dataUrl);
 
-                feDisp.setAttribute('scale', isExp ? '40' : '32');
+                feDisp.setAttribute('scale', String(activeScale));
             }}
 
             // Alterna entre refracao SVG real e backdrop-filter blur generico
@@ -577,6 +592,17 @@ def render_html_dashboard(data: dict) -> str:
                     const isNoSvg = island.classList.toggle('no-svg');
                     toggleBtn.classList.toggle('active', !isNoSvg);
                     toggleBtn.textContent = isNoSvg ? 'Refração: OFF' : 'Refração: ON';
+                }});
+            }}
+
+            // Alterna grau de intensidade da refração (Sutil -> Média -> Forte)
+            if (intensityBtn) {{
+                intensityBtn.addEventListener('click', (e) => {{
+                    e.stopPropagation();
+                    currentIntensityIdx = (currentIntensityIdx + 1) % INTENSITIES.length;
+                    const nextCfg = INTENSITIES[currentIntensityIdx];
+                    intensityBtn.textContent = 'Grau: ' + nextCfg.name;
+                    updateShader();
                 }});
             }}
 
