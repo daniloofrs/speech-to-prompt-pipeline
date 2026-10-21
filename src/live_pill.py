@@ -46,11 +46,15 @@ import sounddevice as sd
 from faster_whisper import WhisperModel
 
 from src.config import (
+    AUTO_STOP_ON_SILENCE,
     LIVE_HOTKEY,
     LIVE_OLLAMA_MODEL,
     LIVE_WHISPER_BEAM_SIZE,
     LIVE_WHISPER_MODEL,
+    MAX_INITIAL_SILENCE_S,
     OLLAMA_HOST,
+    SILENCE_THRESHOLD_RMS,
+    SILENCE_TIMEOUT_S,
     WHISPER_COMPUTE_TYPE,
     WHISPER_DEVICE,
 )
@@ -431,6 +435,12 @@ class LivePillApp:
         self.last_prompt_text = ""
         self.copy_feedback_active = False
 
+        # Detecção Inteligente de Silêncio (Hands-Free VAD)
+        self.has_spoken: bool = False
+        self.last_speech_time: float = 0.0
+        self.is_silence_countdown: bool = False
+        self.ambient_rms_floor: float = 0.006
+
         # IDs e caches de alta performance para o Canvas (Zero Garbage Collection por frame)
         self.wave_bar_ids: List[Tuple[int, float, float]] = []
         self.record_timer_id: Optional[int] = None
@@ -736,6 +746,7 @@ class LivePillApp:
 
         # Atualiza ondas de voz reativas durante gravação
         if self.state == "recording":
+            wall_now = time.time()
             self.smoothed_rms = 0.72 * self.smoothed_rms + 0.28 * self.current_rms
             base_energy = min(1.0, self.smoothed_rms * 14.0)
             t = now * 9.5
@@ -743,6 +754,40 @@ class LivePillApp:
             for i in range(5):
                 wave = 0.18 + base_energy * Multipliers[i] * (0.65 + 0.35 * math.sin(t + i * 1.1))
                 self.wave_bars[i] = max(0.16, min(1.0, wave))
+
+            # Calibra ruído de fundo nos primeiros 350ms (apenas com sons abaixo do limiar de fala)
+            if (wall_now - self.record_start_time) < 0.35 and self.current_rms < SILENCE_THRESHOLD_RMS:
+                self.ambient_rms_floor = min(
+                    SILENCE_THRESHOLD_RMS * 0.75,
+                    0.85 * self.ambient_rms_floor + 0.15 * self.current_rms,
+                )
+
+            # Detecção de silêncio inteligente (Hands-Free Auto-Stop)
+            if AUTO_STOP_ON_SILENCE:
+                speech_threshold = min(0.028, max(SILENCE_THRESHOLD_RMS, self.ambient_rms_floor * 2.0))
+                if self.smoothed_rms > speech_threshold:
+                    self.has_spoken = True
+                    self.last_speech_time = wall_now
+                    self.is_silence_countdown = False
+                elif self.has_spoken:
+                    silence_elapsed = wall_now - self.last_speech_time
+                    if silence_elapsed >= 0.75:
+                        self.is_silence_countdown = True
+                    if silence_elapsed >= SILENCE_TIMEOUT_S:
+                        logger.info(
+                            "Silêncio de %.1fs detectado após fala. Auto-concluindo transcrição...",
+                            SILENCE_TIMEOUT_S,
+                        )
+                        self._stop_audio_capture()
+                else:
+                    # Inatividade inicial prolongada (ex: pressionou F8 por engano)
+                    if (wall_now - self.record_start_time) >= MAX_INITIAL_SILENCE_S:
+                        logger.info(
+                            "Tempo limite de inatividade inicial (%.1fs). Cancelando...",
+                            MAX_INITIAL_SILENCE_S,
+                        )
+                        self._show_toast("Nenhuma fala detectada")
+                        self._stop_audio_capture()
 
         if is_moving:
             self._apply_window_geometry()
@@ -875,12 +920,18 @@ class LivePillApp:
 
         elapsed = int(time.time() - self.record_start_time)
         mins, secs = elapsed // 60, elapsed % 60
-        self.last_timer_text = f"Ouvindo  {mins}:{secs:02d}"
+        if self.is_silence_countdown:
+            self.last_timer_text = "Concluindo..."
+            timer_color = APPLE_ORANGE
+        else:
+            self.last_timer_text = f"Ouvindo  {mins}:{secs:02d}"
+            timer_color = APPLE_RED
+
         self.record_timer_id = self.canvas.create_text(
             58.0,
             top_y,
             text=self.last_timer_text,
-            fill=APPLE_RED,
+            fill=timer_color,
             anchor="w",
             font=("Segoe UI Semibold", 9),
         )
@@ -932,10 +983,16 @@ class LivePillApp:
         if self.record_timer_id:
             elapsed = int(time.time() - self.record_start_time)
             mins, secs = elapsed // 60, elapsed % 60
-            timer_text = f"Ouvindo  {mins}:{secs:02d}"
+            if self.is_silence_countdown:
+                timer_text = "Concluindo..."
+                timer_color = APPLE_ORANGE
+            else:
+                timer_text = f"Ouvindo  {mins}:{secs:02d}"
+                timer_color = APPLE_RED
+
             if self.last_timer_text != timer_text:
                 self.last_timer_text = timer_text
-                self.canvas.itemconfig(self.record_timer_id, text=timer_text)
+                self.canvas.itemconfig(self.record_timer_id, text=timer_text, fill=timer_color)
 
     def _draw_processing_state(self, w: float, h: float) -> None:
         cy = h / 2.0
@@ -1125,6 +1182,9 @@ class LivePillApp:
         self.smoothed_rms = 0.0
         self.record_start_time = time.time()
         self.stop_recording_event.clear()
+        self.has_spoken = False
+        self.last_speech_time = time.time()
+        self.is_silence_countdown = False
 
         self._transition_to("recording")
         play_chime("start")

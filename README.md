@@ -35,7 +35,7 @@ Você inicia a ferramenta com dois cliques no atalho **Speech to Prompt** na sua
 
 1. **Aperte F8 em qualquer tela.** Não importa se você está no VS Code, no navegador ou no terminal. Um som suave avisa você que o microfone abriu.
 2. **Fale naturalmente.** A pílula flutuante mostra o seu equalizador de voz em tempo real e a transcrição ao vivo na tela a 60 FPS com física de molas.
-3. **Aperte F8 de novo pra concluir.** Um segundo som confirma o término. Em cerca de 1.5s, o seu prompt estruturado já está no clipboard, pronto pra você dar `Ctrl + V` no Claude, Gemini ou ChatGPT.
+3. **Parada automática por silêncio (ou aperte F8 pra concluir na hora).** Quando você termina de falar e faz uma pausa de 2 segundos, a pílula detecta o silêncio e conclui tudo sozinha (hands-free). Se preferir, você também pode apertar F8 pra enviar de imediato. Em cerca de 1.2s, o seu prompt estruturado já cai no clipboard, pronto pra você dar `Ctrl + V` no Claude, Gemini ou ChatGPT.
 
 ---
 

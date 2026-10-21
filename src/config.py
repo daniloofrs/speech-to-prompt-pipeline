@@ -32,6 +32,12 @@ LIVE_HOTKEY = os.getenv("LIVE_HOTKEY", "F8")
 LIVE_WHISPER_MODEL = os.getenv("LIVE_WHISPER_MODEL", WHISPER_MODEL)
 LIVE_WHISPER_BEAM_SIZE = int(os.getenv("LIVE_WHISPER_BEAM_SIZE", "1"))
 
+# Detecção Automática de Silêncio (Hands-Free VAD)
+AUTO_STOP_ON_SILENCE = os.getenv("AUTO_STOP_ON_SILENCE", "true").lower() == "true"
+SILENCE_TIMEOUT_S = float(os.getenv("SILENCE_TIMEOUT_S", "2.0"))
+SILENCE_THRESHOLD_RMS = float(os.getenv("SILENCE_THRESHOLD_RMS", "0.016"))
+MAX_INITIAL_SILENCE_S = float(os.getenv("MAX_INITIAL_SILENCE_S", "6.0"))
+
 
 def get_db_connection_uri() -> str:
     """Retorna a URI de conexao para o PostgreSQL."""
