@@ -29,6 +29,8 @@ OLLAMA_TEMPERATURE = float(os.getenv("OLLAMA_TEMPERATURE", "0.1"))
 
 # Configuracoes de Usabilidade da Pílula Live
 LIVE_HOTKEY = os.getenv("LIVE_HOTKEY", "F8")
+LIVE_WHISPER_MODEL = os.getenv("LIVE_WHISPER_MODEL", WHISPER_MODEL)
+LIVE_WHISPER_BEAM_SIZE = int(os.getenv("LIVE_WHISPER_BEAM_SIZE", "1"))
 
 
 def get_db_connection_uri() -> str:

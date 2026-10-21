@@ -48,6 +48,8 @@ from faster_whisper import WhisperModel
 from src.config import (
     LIVE_HOTKEY,
     LIVE_OLLAMA_MODEL,
+    LIVE_WHISPER_BEAM_SIZE,
+    LIVE_WHISPER_MODEL,
     OLLAMA_HOST,
     WHISPER_COMPUTE_TYPE,
     WHISPER_DEVICE,
@@ -145,7 +147,6 @@ class Win32GlobalHotkey(threading.Thread):
 
 
 # Modelos de alta precisão e baixa latência na GPU
-LIVE_WHISPER_MODEL = os.getenv("LIVE_WHISPER_MODEL", "medium")
 FAST_OLLAMA_MODEL = os.getenv("LIVE_OLLAMA_MODEL", LIVE_OLLAMA_MODEL)
 
 # Paleta de Materiais Apple Dark Mode (HIG System Colors)
@@ -421,12 +422,22 @@ class LivePillApp:
         self.current_rms = 0.0
         self.smoothed_rms = 0.0
         self.wave_bars = [0.2, 0.35, 0.5, 0.35, 0.2]
+        self.transcribe_lock = threading.Lock()
+        self.stop_recording_event = threading.Event()
 
         # Transcrição e resultado
         self.live_transcript = ""
         self.last_raw_text = ""
         self.last_prompt_text = ""
         self.copy_feedback_active = False
+
+        # IDs e caches de alta performance para o Canvas (Zero Garbage Collection por frame)
+        self.wave_bar_ids: List[Tuple[int, float, float]] = []
+        self.record_timer_id: Optional[int] = None
+        self.last_timer_text: str = ""
+        self.orb_outer_id: Optional[int] = None
+        self.orb_inner_id: Optional[int] = None
+        self.last_applied_geometry: Tuple[int, int, int, int] = (0, 0, 0, 0)
 
         self.ui_queue: queue.Queue = queue.Queue()
 
@@ -721,6 +732,7 @@ class LivePillApp:
         moved_h = self.spring_h.step(dt)
         moved_r = self.spring_r.step(dt)
         moved_s = self.spring_scale.step(dt)
+        is_moving = moved_x or moved_y or moved_w or moved_h or moved_r or moved_s
 
         # Atualiza ondas de voz reativas durante gravação
         if self.state == "recording":
@@ -732,11 +744,13 @@ class LivePillApp:
                 wave = 0.18 + base_energy * Multipliers[i] * (0.65 + 0.35 * math.sin(t + i * 1.1))
                 self.wave_bars[i] = max(0.16, min(1.0, wave))
 
-        if moved_x or moved_y or moved_w or moved_h or moved_r or moved_s:
+        if is_moving:
             self._apply_window_geometry()
             self._render_canvas()
-        elif self.state in ("recording", "processing"):
-            self._render_canvas()
+        elif self.state == "recording":
+            self._fast_update_recording_bars()
+        elif self.state == "processing":
+            self._fast_update_processing_spinner()
 
         self.root.after(16, self._animation_tick)
 
@@ -746,7 +760,9 @@ class LivePillApp:
         h = max(36, int(round(self.spring_h.value * scale)))
         x = int(round(self.spring_x.value - w / 2.0))
         y = int(round(self.spring_bottom_y.value - h))
-        self.root.geometry(f"{w}x{h}+{x}+{y}")
+        if (w, h, x, y) != self.last_applied_geometry:
+            self.last_applied_geometry = (w, h, x, y)
+            self.root.geometry(f"{w}x{h}+{x}+{y}")
 
     def _render_canvas(self) -> None:
         self.canvas.delete("all")
@@ -845,22 +861,25 @@ class LivePillApp:
         # Cabeçalho da Dynamic Island em gravação
         top_y = 22.0
 
-        # Waveform Apple Voice Memos (5 barras dinâmicas)
+        # Waveform Apple Voice Memos (5 barras dinâmicas em cache de IDs)
         start_wx = 24.0
+        self.wave_bar_ids = []
         for i, val in enumerate(self.wave_bars):
             bx = start_wx + i * 5.5
             bar_h = max(4.0, val * 18.0)
-            self.canvas.create_line(
+            bar_id = self.canvas.create_line(
                 bx, top_y - bar_h / 2.0, bx, top_y + bar_h / 2.0,
                 fill=APPLE_RED, width=2.5, capstyle="round"
             )
+            self.wave_bar_ids.append((bar_id, bx, top_y))
 
         elapsed = int(time.time() - self.record_start_time)
         mins, secs = elapsed // 60, elapsed % 60
-        self.canvas.create_text(
+        self.last_timer_text = f"Ouvindo  {mins}:{secs:02d}"
+        self.record_timer_id = self.canvas.create_text(
             58.0,
             top_y,
-            text=f"Ouvindo  {mins}:{secs:02d}",
+            text=self.last_timer_text,
             fill=APPLE_RED,
             anchor="w",
             font=("Segoe UI Semibold", 9),
@@ -900,17 +919,35 @@ class LivePillApp:
             font=("Segoe UI Semibold" if has_words else "Segoe UI", 10),
         )
 
+    def _fast_update_recording_bars(self) -> None:
+        """Atualiza apenas as coordenadas das 5 barras de onda e do cronômetro sem destruir o canvas."""
+        if not self.wave_bar_ids:
+            return
+        for i, (bar_id, bx, top_y) in enumerate(self.wave_bar_ids):
+            if i < len(self.wave_bars):
+                val = self.wave_bars[i]
+                bar_h = max(4.0, val * 18.0)
+                self.canvas.coords(bar_id, bx, top_y - bar_h / 2.0, bx, top_y + bar_h / 2.0)
+
+        if self.record_timer_id:
+            elapsed = int(time.time() - self.record_start_time)
+            mins, secs = elapsed // 60, elapsed % 60
+            timer_text = f"Ouvindo  {mins}:{secs:02d}"
+            if self.last_timer_text != timer_text:
+                self.last_timer_text = timer_text
+                self.canvas.itemconfig(self.record_timer_id, text=timer_text)
+
     def _draw_processing_state(self, w: float, h: float) -> None:
         cy = h / 2.0
         # Indicador pulsante estilo Apple Intelligence / Siri
         t = time.perf_counter() * 5.0
         pulse_r = 6.5 + 1.8 * math.sin(t)
         orb_x = 28.0
-        self.canvas.create_oval(
+        self.orb_outer_id = self.canvas.create_oval(
             orb_x - pulse_r - 3, cy - pulse_r - 3, orb_x + pulse_r + 3, cy + pulse_r + 3,
             fill="#191833", outline=""
         )
-        self.canvas.create_oval(
+        self.orb_inner_id = self.canvas.create_oval(
             orb_x - pulse_r, cy - pulse_r, orb_x + pulse_r, cy + pulse_r,
             fill=APPLE_INDIGO, outline=APPLE_BLUE
         )
@@ -921,6 +958,27 @@ class LivePillApp:
             text="Refinando comando...",
             fill=APPLE_TEXT_PRIMARY,
             font=("Segoe UI Semibold", 10),
+        )
+
+    def _fast_update_processing_spinner(self) -> None:
+        """Atualiza a pulsação do orbe de processamento via coords sem recriar elementos."""
+        if not self.orb_outer_id or not self.orb_inner_id:
+            return
+        t = time.perf_counter() * 5.0
+        pulse_r = 6.5 + 1.8 * math.sin(t)
+        scale = self.spring_scale.value
+        h = max(36.0, self.spring_h.value * scale)
+        cy = h / 2.0
+        orb_x = 28.0
+        self.canvas.coords(
+            self.orb_outer_id,
+            orb_x - pulse_r - 3, cy - pulse_r - 3,
+            orb_x + pulse_r + 3, cy + pulse_r + 3,
+        )
+        self.canvas.coords(
+            self.orb_inner_id,
+            orb_x - pulse_r, cy - pulse_r,
+            orb_x + pulse_r, cy + pulse_r,
         )
 
     def _draw_result_state(self, w: float, h: float) -> None:
@@ -1066,6 +1124,7 @@ class LivePillApp:
         self.current_rms = 0.0
         self.smoothed_rms = 0.0
         self.record_start_time = time.time()
+        self.stop_recording_event.clear()
 
         self._transition_to("recording")
         play_chime("start")
@@ -1094,39 +1153,57 @@ class LivePillApp:
             self._show_toast("Microfone indisponível")
 
     def _live_transcribe_loop(self) -> None:
-        """Loop que transcreve blocos de fala em tempo real na GPU com normalização de áudio."""
-        while self.state == "recording":
-            time.sleep(0.55)
-            if self.state != "recording":
-                break
+        """Loop que transcreve blocos de fala em tempo real na GPU de forma não-bloqueante."""
+        last_processed_len = 0
+        while not self.stop_recording_event.is_set() and self.state == "recording":
+            # Dorme em fatias curtas de 100ms para responder instantaneamente ao stop_recording_event
+            for _ in range(8):  # ~0.8s
+                if self.stop_recording_event.is_set() or self.state != "recording":
+                    return
+                time.sleep(0.1)
 
             if len(self.audio_chunks) < 3:
                 continue
 
             try:
                 audio_snapshot = np.concatenate(list(self.audio_chunks)).flatten()
-                if len(audio_snapshot) < SAMPLE_RATE * 0.6 or self.whisper_model is None:
+                # Só processa se houver ao menos 0.7s de áudio total e 0.4s de novos dados
+                if len(audio_snapshot) < SAMPLE_RATE * 0.7 or (len(audio_snapshot) - last_processed_len) < SAMPLE_RATE * 0.4:
+                    continue
+                if self.whisper_model is None:
                     continue
 
-                norm_audio = normalize_audio(audio_snapshot)
+                # Tenta adquirir o lock sem bloquear; se o worker final estiver usando a GPU, pula
+                if not self.transcribe_lock.acquire(blocking=False):
+                    continue
 
-                segments, _ = self.whisper_model.transcribe(
-                    norm_audio,
-                    language="pt",
-                    beam_size=1,
-                    best_of=1,
-                    temperature=0.0,
-                    initial_prompt=TECH_INITIAL_PROMPT,
-                    condition_on_previous_text=False,
-                    without_timestamps=True,
-                    vad_filter=True,
-                    vad_parameters=dict(min_silence_duration_ms=300, speech_pad_ms=200),
-                )
-                partial_text = " ".join(s.text.strip() for s in segments).strip()
+                try:
+                    if self.stop_recording_event.is_set() or self.state != "recording":
+                        return
 
-                if partial_text and partial_text != self.live_transcript:
-                    self.live_transcript = partial_text
-                    self.ui_queue.put(("live_update", partial_text))
+                    last_processed_len = len(audio_snapshot)
+                    norm_audio = normalize_audio(audio_snapshot)
+
+                    segments, _ = self.whisper_model.transcribe(
+                        norm_audio,
+                        language="pt",
+                        beam_size=1,
+                        best_of=1,
+                        temperature=0.0,
+                        initial_prompt=TECH_INITIAL_PROMPT,
+                        condition_on_previous_text=False,
+                        without_timestamps=True,
+                        vad_filter=True,
+                        vad_parameters=dict(min_silence_duration_ms=250, speech_pad_ms=150),
+                    )
+                    partial_text = " ".join(s.text.strip() for s in segments).strip()
+
+                    if partial_text and partial_text != self.live_transcript and not self.stop_recording_event.is_set():
+                        self.live_transcript = partial_text
+                        self.ui_queue.put(("live_update", partial_text))
+
+                finally:
+                    self.transcribe_lock.release()
 
             except Exception as e:
                 logger.warning(f"Aviso na transcrição ao vivo: {e}")
@@ -1135,9 +1212,15 @@ class LivePillApp:
         if self.state != "recording":
             return
 
+        # Sinaliza IMEDIATAMENTE a parada para o loop de streaming liberar a GPU
+        self.stop_recording_event.set()
+
         if self.audio_stream:
-            self.audio_stream.stop()
-            self.audio_stream.close()
+            try:
+                self.audio_stream.stop()
+                self.audio_stream.close()
+            except Exception:
+                pass
             self.audio_stream = None
 
         if not self.audio_chunks:
@@ -1147,7 +1230,7 @@ class LivePillApp:
         final_audio = np.concatenate(self.audio_chunks).flatten()
         duration_s = len(final_audio) / SAMPLE_RATE
 
-        if duration_s < 0.4:
+        if duration_s < 0.35:
             self._show_toast("Fala muito curta")
             return
 
@@ -1160,33 +1243,34 @@ class LivePillApp:
         ).start()
 
     def _final_pipeline_worker(self, audio_data: np.ndarray) -> None:
-        """Executa a transcrição final completa com alta precisão e aciona a reescrita rápida."""
+        """Executa a transcrição final completa com alta velocidade na GPU e aciona a reescrita."""
         try:
-            # Aguarda caso o usuário tenha falado nos primeiros 2s antes do modelo terminar de subir na GPU
-            wait_ticks = 0
-            while self.whisper_model is None and wait_ticks < 60:
-                time.sleep(0.1)
-                wait_ticks += 1
-            if self.whisper_model is None:
-                self.whisper_model = self._instantiate_whisper()
+            # Garante acesso exclusivo à GPU com o lock
+            with self.transcribe_lock:
+                wait_ticks = 0
+                while self.whisper_model is None and wait_ticks < 60:
+                    time.sleep(0.1)
+                    wait_ticks += 1
+                if self.whisper_model is None:
+                    self.whisper_model = self._instantiate_whisper()
 
-            norm_audio = normalize_audio(audio_data)
-            logger.info("Executando transcrição final completa com Whisper de alta precisão...")
-            t_w = time.time()
-            segments, _ = self.whisper_model.transcribe(
-                norm_audio,
-                language="pt",
-                beam_size=3,
-                best_of=3,
-                temperature=0.0,
-                initial_prompt=TECH_INITIAL_PROMPT,
-                condition_on_previous_text=False,
-                without_timestamps=True,
-                vad_filter=True,
-                vad_parameters=dict(min_silence_duration_ms=400, speech_pad_ms=300),
-            )
-            raw_text = " ".join(s.text.strip() for s in segments).strip()
-            logger.info(f"Transcrição concluída em {time.time()-t_w:.2f}s: \"{raw_text}\"")
+                norm_audio = normalize_audio(audio_data)
+                logger.info(f"Executando transcrição final otimizada (beam_size={LIVE_WHISPER_BEAM_SIZE})...")
+                t_w = time.time()
+                segments, _ = self.whisper_model.transcribe(
+                    norm_audio,
+                    language="pt",
+                    beam_size=LIVE_WHISPER_BEAM_SIZE,
+                    best_of=LIVE_WHISPER_BEAM_SIZE,
+                    temperature=0.0,
+                    initial_prompt=TECH_INITIAL_PROMPT,
+                    condition_on_previous_text=False,
+                    without_timestamps=True,
+                    vad_filter=True,
+                    vad_parameters=dict(min_silence_duration_ms=350, speech_pad_ms=250),
+                )
+                raw_text = " ".join(s.text.strip() for s in segments).strip()
+                logger.info(f"Transcrição concluída em {time.time()-t_w:.2f}s: \"{raw_text}\"")
 
             if not raw_text:
                 self.ui_queue.put(("error", "Nenhuma fala detectada"))
@@ -1207,6 +1291,7 @@ class LivePillApp:
 
         except Exception as error:
             logger.error(f"Erro no pipeline final: {error}")
+            self.ui_queue.put(("error", "Falha ao processar"))
             self.ui_queue.put(("error", "Falha ao processar"))
 
     def _show_toast(self, message: str) -> None:

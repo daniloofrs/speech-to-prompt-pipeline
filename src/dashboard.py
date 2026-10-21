@@ -310,6 +310,8 @@ def render_html_dashboard(data: dict) -> str:
             cursor: grab;
             user-select: none;
             touch-action: none;
+            will-change: transform, left, top;
+            transform: translateZ(0);
             background: rgba(12, 12, 16, 0.88);
             backdrop-filter: blur(52px) url(#liquid-glass-filter) saturate(190%) contrast(104%);
             -webkit-backdrop-filter: blur(52px) url(#liquid-glass-filter) saturate(190%) contrast(104%);
@@ -684,27 +686,32 @@ def render_html_dashboard(data: dict) -> str:
                 island.style.transform = 'none';
             }});
 
+            let dragRafId = null;
             window.addEventListener('pointermove', (e) => {{
                 if (!isDragging) return;
                 const dx = e.clientX - startX;
                 const dy = e.clientY - startY;
 
-                let newX = initialLeft + dx;
-                let newY = initialTop + dy;
+                if (dragRafId) cancelAnimationFrame(dragRafId);
+                dragRafId = requestAnimationFrame(() => {{
+                    let newX = initialLeft + dx;
+                    let newY = initialTop + dy;
 
-                // Restringe a visao dentro dos limites da janela
-                const margin = 8;
-                const maxW = window.innerWidth - island.offsetWidth - margin;
-                const maxH = window.innerHeight - island.offsetHeight - margin;
+                    // Restringe a visao dentro dos limites da janela
+                    const margin = 8;
+                    const maxW = window.innerWidth - island.offsetWidth - margin;
+                    const maxH = window.innerHeight - island.offsetHeight - margin;
 
-                newX = Math.max(margin, Math.min(newX, maxW));
-                newY = Math.max(margin, Math.min(newY, maxH));
+                    newX = Math.max(margin, Math.min(newX, maxW));
+                    newY = Math.max(margin, Math.min(newY, maxH));
 
-                island.style.left = newX + 'px';
-                island.style.top = newY + 'px';
+                    island.style.left = newX + 'px';
+                    island.style.top = newY + 'px';
+                }});
             }});
 
             window.addEventListener('pointerup', (e) => {{
+                if (dragRafId) cancelAnimationFrame(dragRafId);
                 if (isDragging) {{
                     isDragging = false;
                     try {{ island.releasePointerCapture(e.pointerId); }} catch (_) {{}}
