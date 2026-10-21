@@ -27,6 +27,9 @@ OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:7b")
 LIVE_OLLAMA_MODEL = os.getenv("LIVE_OLLAMA_MODEL", "qwen2.5:3b")
 OLLAMA_TEMPERATURE = float(os.getenv("OLLAMA_TEMPERATURE", "0.1"))
 
+# Configuracoes de Usabilidade da Pílula Live
+LIVE_HOTKEY = os.getenv("LIVE_HOTKEY", "F8")
+
 
 def get_db_connection_uri() -> str:
     """Retorna a URI de conexao para o PostgreSQL."""

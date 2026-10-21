@@ -46,6 +46,7 @@ import sounddevice as sd
 from faster_whisper import WhisperModel
 
 from src.config import (
+    LIVE_HOTKEY,
     LIVE_OLLAMA_MODEL,
     OLLAMA_HOST,
     WHISPER_COMPUTE_TYPE,
@@ -62,6 +63,86 @@ logger = logging.getLogger("live_pill")
 
 SAMPLE_RATE = 16000
 KEY_COLOR = "#010102"  # Cor-chave de recorte transparente no Windows
+
+
+def play_chime(kind: str = "start") -> None:
+    """Toca um chime sonoro suave nativo do Windows em background sem travar a interface."""
+    def _play():
+        if sys.platform != "win32":
+            return
+        try:
+            import winsound
+            if kind == "start":
+                winsound.MessageBeep(winsound.MB_ICONASTERISK)
+            elif kind == "success":
+                winsound.MessageBeep(winsound.MB_OK)
+            elif kind == "error":
+                winsound.MessageBeep(winsound.MB_ICONHAND)
+        except Exception:
+            pass
+    threading.Thread(target=_play, daemon=True).start()
+
+
+class Win32GlobalHotkey(threading.Thread):
+    """Escuta teclas de atalho globais no Windows via Win32 RegisterHotKey em background."""
+    def __init__(self, key_name: str, callback: Callable[[], None]):
+        super().__init__(daemon=True)
+        self.key_name = key_name.upper().strip()
+        self.callback = callback
+        self.running = True
+        self.thread_id = None
+
+    def run(self):
+        if sys.platform != "win32":
+            return
+        import ctypes
+        from ctypes import wintypes
+
+        VK_MAP = {
+            "F1": 0x70, "F2": 0x71, "F3": 0x72, "F4": 0x73,
+            "F5": 0x74, "F6": 0x75, "F7": 0x76, "F8": 0x77,
+            "F9": 0x78, "F10": 0x79, "F11": 0x7A, "F12": 0x7B,
+            "SPACE": 0x20,
+        }
+        vk = VK_MAP.get(self.key_name, 0x77)  # Padrão: F8
+        HOTKEY_ID = 101
+        MOD_NOREPEAT = 0x4000
+
+        user32 = ctypes.windll.user32
+        self.thread_id = ctypes.windll.kernel32.GetCurrentThreadId()
+
+        # Tenta registrar com MOD_NOREPEAT (evita múltiplos disparos ao segurar)
+        success = user32.RegisterHotKey(None, HOTKEY_ID, MOD_NOREPEAT, vk)
+        if not success:
+            success = user32.RegisterHotKey(None, HOTKEY_ID, 0, vk)
+
+        if not success:
+            logger.warning(f"Não foi possível registrar o atalho global {self.key_name}. Pode estar em uso por outro aplicativo.")
+            return
+
+        logger.info(f"Atalho global '{self.key_name}' ativo! Pressione a qualquer momento no Windows para gravar/parar.")
+
+        msg = wintypes.MSG()
+        while self.running:
+            res = user32.GetMessageW(ctypes.byref(msg), None, 0, 0)
+            if res <= 0:
+                break
+            if msg.message == 0x0312:  # WM_HOTKEY
+                try:
+                    self.callback()
+                except Exception as e:
+                    logger.error(f"Erro ao disparar callback da hotkey {self.key_name}: {e}")
+            user32.TranslateMessage(ctypes.byref(msg))
+            user32.DispatchMessageW(ctypes.byref(msg))
+
+        user32.UnregisterHotKey(None, HOTKEY_ID)
+
+    def stop(self):
+        self.running = False
+        if self.thread_id and sys.platform == "win32":
+            import ctypes
+            ctypes.windll.user32.PostThreadMessageW(self.thread_id, 0x0012, 0, 0)  # WM_QUIT
+
 
 # Modelos de alta precisão e baixa latência na GPU
 LIVE_WHISPER_MODEL = os.getenv("LIVE_WHISPER_MODEL", "medium")
@@ -388,6 +469,51 @@ class LivePillApp:
         self._start_queue_listener()
         self._animation_tick()
 
+        # Inicializa o atalho global Win32 (F8 por padrão)
+        self.hotkey_listener: Optional[Win32GlobalHotkey] = None
+        if sys.platform == "win32":
+            try:
+                self.hotkey_listener = Win32GlobalHotkey(
+                    key_name=LIVE_HOTKEY,
+                    callback=self._on_hotkey_toggle,
+                )
+                self.hotkey_listener.start()
+            except Exception as e:
+                logger.warning(f"Aviso ao inicializar atalho global: {e}")
+
+        self.root.bind("<Escape>", lambda _e: self.destroy())
+        self.root.protocol("WM_DELETE_WINDOW", self.destroy)
+
+    def _on_hotkey_toggle(self) -> None:
+        """Callback acionado quando a tecla global (ex: F8) é pressionada em qualquer app."""
+        def _execute():
+            self.root.deiconify()
+            self.root.lift()
+            self.root.attributes("-topmost", True)
+            if self.state in ("idle", "toast", "result"):
+                self._start_audio_capture()
+            elif self.state == "recording":
+                self._stop_audio_capture()
+        self.root.after(0, _execute)
+
+    def destroy(self) -> None:
+        """Encerra a aplicação de forma limpa desregistrando hotkeys e parando streams."""
+        if self.hotkey_listener:
+            try:
+                self.hotkey_listener.stop()
+            except Exception:
+                pass
+        if self.audio_stream:
+            try:
+                self.audio_stream.stop()
+                self.audio_stream.close()
+            except Exception:
+                pass
+        try:
+            self.root.destroy()
+        except Exception:
+            pass
+
     def _configure_window(self) -> None:
         self.root.overrideredirect(True)
         self.root.attributes("-topmost", True)
@@ -673,7 +799,7 @@ class LivePillApp:
             x, y, text="✕", fill=fg, font=("Segoe UI", 8, "bold")
         )
         self.interactive_regions["close"] = (
-            x - radius, y - radius, x + radius, y + radius, self.root.destroy
+            x - radius, y - radius, x + radius, y + radius, self.destroy
         )
 
     def _draw_idle_state(self, w: float, h: float) -> None:
@@ -691,8 +817,8 @@ class LivePillApp:
             fill=dot_color, outline=""
         )
 
-        # Rótulo central com tipografia limpa
-        label_text = "Ditar comando" if self.models_ready else "Preparando motor neural..."
+        # Rótulo central com tipografia limpa e indicação da tecla de atalho
+        label_text = f"Ditar comando ({LIVE_HOTKEY})" if self.models_ready else "Preparando motor neural..."
         self.canvas.create_text(
             w / 2.0 - 4,
             cy - 0.5,
@@ -942,6 +1068,7 @@ class LivePillApp:
         self.record_start_time = time.time()
 
         self._transition_to("recording")
+        play_chime("start")
 
         def audio_callback(indata, _frames, _time_info, status):
             if status:
@@ -1102,6 +1229,7 @@ class LivePillApp:
                     raw_text, prompt_text = payload
                     self.last_raw_text = raw_text
                     self.last_prompt_text = prompt_text
+                    play_chime("success")
                     self._transition_to("result")
                 elif msg_type == "error":
                     self._show_toast(str(payload))
@@ -1116,6 +1244,7 @@ class LivePillApp:
     def _on_copy_again_click(self) -> None:
         if self.last_prompt_text:
             pyperclip.copy(self.last_prompt_text)
+            play_chime("success")
             self.copy_feedback_active = True
             self._render_canvas()
             self.root.after(
@@ -1165,13 +1294,17 @@ class LivePillApp:
 
 def main() -> None:
     root = tk.Tk()
-    _app = LivePillApp(root)
+    app = LivePillApp(root)
     print("\n>>> Dynamic Island (Apple Fluid Design) Ativa!")
+    print(f"    - Atalho Global no Windows: [{LIVE_HOTKEY}] (grave e pare de qualquer app)")
     print(f"    - Modelo de Fala: Whisper '{LIVE_WHISPER_MODEL}' (GPU RTX 4050)")
     print(f"    - Modelo de Reescrita: Ollama '{FAST_OLLAMA_MODEL}' (Ultra Rápido)")
     print("    - Física de molas contínuas (60 FPS), ondas reativas de voz e projeção de momento.")
     print("    - Prompt refinado copiado instantaneamente para o Ctrl+V.\n")
-    root.mainloop()
+    try:
+        root.mainloop()
+    finally:
+        app.destroy()
 
 
 if __name__ == "__main__":

@@ -183,14 +183,20 @@ As migrações SQL na pasta `sql/` são executadas automaticamente no primeiro b
 ### Modo 1: Dynamic Island Desktop (Uso Rápido no Dia a Dia)
 Para ditar comandos de programação enquanto você navega ou desenvolve e colá-los direto no seu editor ou chat de IA:
 
+#### Opção A: 1 Clique na Área de Trabalho (Recomendado - Zero Terminal)
+- Dê dois cliques no atalho **`Speech to Prompt`** na sua Área de Trabalho (criado automaticamente via `tools/criar_atalho.ps1`).
+- O assistente sobe 100% silencioso em segundo plano através do `pythonw.exe` **sem nenhuma janela de terminal aberta**.
+
+#### Opção B: Pelo Terminal
 ```powershell
 .\venv\Scripts\python src/live_pill.py
 ```
 
-- **Aparência:** Uma pílula preta translúcida surge no inferior-meio da tela.
-- **1º Clique:** Comece a falar. Veja as ondas de voz reagirem e suas palavras serem transcritas em tempo real.
-- **2º Clique:** O áudio é finalizado, normalizado, reescrito pelo Ollama em ~2s e **copiado automaticamente para seu `Ctrl + V`**.
-- **Arrastável:** Clique e arraste para qualquer lugar da tela com inércia física real.
+- **Atalho Global no Windows (`F8`):** Pressione **`F8`** em qualquer programa (VS Code, Chrome, Terminal) para começar a falar com feedback sonoro suave. Pressione **`F8`** novamente para concluir a gravação.
+- **Feedback Sonoro (Chimes):** Som suave de ativação ao iniciar a escuta e chime de confirmação assim que o prompt estiver pronto no `Ctrl + V`.
+- **Streaming ao Vivo:** As ondas de voz reagem à amplitude do microfone e as palavras são transcritas em tempo real.
+- **Prompt Instantâneo:** O áudio é finalizado, normalizado, reescrito pelo Ollama em ~1.5s e **copiado automaticamente para seu `Ctrl + V`**.
+- **Arrastável:** Clique e arraste para qualquer lugar da tela com inércia física a 60 FPS (molas Apple).
 - **Independente:** Não exige Docker nem PostgreSQL.
 
 ---
