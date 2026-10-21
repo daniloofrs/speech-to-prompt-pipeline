@@ -1,12 +1,12 @@
 <p align="center">
-  <img src="assets/hero-banner.png" alt="Speech-to-Prompt Pipeline & Live Dynamic Island" width="100%" />
+  <img src="assets/hero-banner.png" alt="Speech-to-Prompt Pipeline e Live Dynamic Island" width="100%" />
 </p>
 
 <p align="center">
   <img src="assets/app-icon.png" alt="Speech to Prompt App Logo" width="88" height="88" style="border-radius: 20px; box-shadow: 0 8px 24px rgba(0,0,0,0.6);" />
 </p>
 
-# 🎙️ Speech-to-Prompt Pipeline & Dynamic Island
+# Speech-to-Prompt Pipeline e Dynamic Island
 
 <p align="center">
   <img src="https://img.shields.io/badge/Python-3.12-blue?logo=python&logoColor=white" alt="Python 3.12" />
@@ -15,129 +15,153 @@
   <img src="https://img.shields.io/badge/NVIDIA%20CUDA-12%20RTX%204050-76B900?logo=nvidia&logoColor=white" alt="CUDA 12" />
   <img src="https://img.shields.io/badge/Faster--Whisper-Medium%20FP16-orange" alt="Faster-Whisper" />
   <img src="https://img.shields.io/badge/Ollama-Qwen2.5-black?logo=ollama&logoColor=white" alt="Ollama" />
-  <img src="https://img.shields.io/badge/UI-Apple%20Fluid%20Design-grey?logo=apple&logoColor=white" alt="Apple Design" />
 </p>
 
-> **Transforme comandos de voz em prompts estruturados prontos no seu `Ctrl + V`.** Pipeline de Engenharia de Dados & LLMOps com governança de qualidade (PostgreSQL) e assistente desktop flutuante estilo **Apple Dynamic Island** com física a 60 FPS e atalho global `F8`.
+Se você programa ou cria soluções com IA todo dia, sabe que cansa ter que parar o raciocínio pra digitar prompts longos e cheios de contexto na mão. Eu criei esse pipeline pra resolver essa dor no meu próprio fluxo: falar o que eu preciso em voz alta e ter um prompt técnico, limpo e estruturado colado no `Ctrl + V` em menos de dois segundos.
+
+Tudo roda 100% local na GPU da minha máquina (uma RTX 4050 de 6 GB), sem depender de APIs pagas na nuvem. O áudio passa pelo Faster-Whisper pra transcrição imediata, vai pro Ollama (Qwen 2.5) pra lapidar o texto e exibe tudo numa interface flutuante inspirada na Dynamic Island da Apple.
 
 ---
 
-## ⚡ Início Rápido (Quickstart)
+## Como você usa no dia a dia
+
+O modo desktop foi feito pra você nunca precisar tirar a mão do teclado ou trocar a janela do seu editor:
+
+<p align="center">
+  <img src="assets/setup-desktop.png" alt="Dynamic Island em Setup de Desenvolvimento" width="100%" />
+</p>
+
+Você inicia a ferramenta com dois cliques no atalho **Speech to Prompt** na sua Área de Trabalho. Ela sobe em segundo plano, direto na memória, sem abrir nenhuma janela preta de console:
+
+1. **Aperte F8 em qualquer tela.** Não importa se você está no VS Code, no navegador ou no terminal. Um som suave avisa você que o microfone abriu.
+2. **Fale naturalmente.** A pílula flutuante mostra o seu equalizador de voz em tempo real e a transcrição ao vivo na tela a 60 FPS com física de molas.
+3. **Aperte F8 de novo pra concluir.** Um segundo som confirma o término. Em cerca de 1.5s, o seu prompt estruturado já está no clipboard, pronto pra você dar `Ctrl + V` no Claude, Gemini ou ChatGPT.
+
+---
+
+## Início Rápido
+
+Pra colocar o projeto pra rodar no seu computador, você só precisa clonar o repositório e seguir estes passos:
 
 ```powershell
-# 1. Clonar e configurar ambiente
+# 1. Clone o repositório e ative o seu ambiente virtual
 git clone https://github.com/daniloofrs/speech-to-prompt-pipeline.git
 cd speech-to-prompt-pipeline
-python -m venv venv; .\venv\Scripts\Activate.ps1
-pip install -r requirements.txt; cp .env.example .env
+python -m venv venv
+.\venv\Scripts\Activate.ps1
 
-# 2. Baixar modelos locais no Ollama
+# 2. Instale as dependências e gere o seu arquivo de ambiente
+pip install -r requirements.txt
+cp .env.example .env
+
+# 3. Baixe os modelos locais no seu Ollama
 ollama pull qwen2.5:3b
 ollama pull qwen2.5:7b
 
-# 3. Subir banco de dados (necessário apenas para modo batch/dashboard)
-docker compose up -d
+# 4. Crie o seu atalho na Área de Trabalho com ícone oficial
+powershell -ExecutionPolicy Bypass -File tools/criar_atalho.ps1
 ```
 
----
-
-## 🍏 1. Modo Desktop: Live Dynamic Island
-
-Assistente de produtividade *Always-on-Top* para ditar comandos enquanto você programa ou navega.
-
-<p align="center">
-  <img src="assets/showcase-setup.png" alt="Dynamic Island em Setup de Desenvolvimento" width="100%" />
-</p>
-
-- **Lançamento em 1 Clique:** Duplo-clique no atalho **`Speech to Prompt`** na Área de Trabalho (criado via `tools/criar_atalho.ps1`). Executa em segundo plano via `pythonw.exe` **sem janela preta de terminal**.
-- **Atalho Global (`F8`):** Pressione **`F8`** em qualquer programa (VS Code, Chrome) para começar a falar. Pressione **`F8`** novamente para concluir.
-- **Feedback Sonoro (Chimes):** Som suave do Windows ao iniciar a escuta e chime de confirmação quando o prompt estiver pronto no `Ctrl + V`.
-- **Streaming & Física Apple:** Transcrição ao vivo na tela, equalizador reativo de voz e física de molas (60 FPS com arrasto e inércia).
-- **Zero Dependências:** Roda 100% em memória RAM e GPU (RTX 4050), entregando o prompt refinado em ~1.5s no seu clipboard.
+Se o seu objetivo for apenas usar o assistente flutuante de voz no cotidiano, você não precisa ligar o Docker. O modo desktop roda direto na sua placa de vídeo e na sua memória RAM.
 
 ---
 
-## 🏗️ 2. Arquitetura do Sistema & Trilha Batch
+## Trilha Batch e Governança com PostgreSQL
+
+Além do assistente de produtividade instantâneo, montei uma trilha em lote pensada pra Engenharia de Dados e LLMOps. Se você quiser processar arquivos de áudio em lote, evitar duplicatas e medir a assertividade das respostas da IA no seu histórico, essa trilha cuida de tudo.
 
 <p align="center">
   <img src="assets/pipeline-isometric.png" alt="Arquitetura 3D do Pipeline" width="100%" />
 </p>
 
-O projeto opera sob duas trilhas complementares de **Engenharia de Dados & IA**:
+Suba o seu banco de dados via Docker:
 
-| Trilha | Objetivo | Stack Principal |
-|---|---|---|
-| **🍏 Live Desktop** | Produtividade diária em tempo real via atalho `F8` | Tkinter 60 FPS, Faster-Whisper Medium, Ollama Qwen2.5:3b, Pyperclip |
-| **📊 Batch Pipeline** | Ingestão auditável em lote, idempotência e curadoria humana | SHA-256 streaming, PostgreSQL 16, Ollama Qwen2.5:7b, Docker |
-
-### Comandos da Trilha Batch:
 ```powershell
-# Ingestão de áudio com SHA-256 estrito (impede duplicatas)
+docker compose up -d
+```
+
+Execute o fluxo de ingestão e a sua auditoria:
+
+```powershell
+# Ingestão com hash SHA-256 estrito (impede você de reprocessar o mesmo áudio)
 python src/ingest.py data/samples/teste.wav
 
-# Reescrita estruturada via LLM
+# Reescrita estruturada com o seu LLM local
 python src/rewrite.py
 
-# Auditoria humana e métricas (Aceitação Direta, Edição, Alucinação)
+# Resumo analítico de curadoria humana (taxa de aprovação direta e alucinações)
 python src/evaluate.py --summary
 ```
 
+### Por que separamos em duas trilhas?
+
+- **Live Desktop:** Foco total na sua agilidade diária com o atalho F8. Usa o Qwen 2.5 de 3B parâmetros pra entregar a resposta em ~1.5s no seu clipboard.
+- **Batch Pipeline:** Foco em rastreabilidade, persistência segura no PostgreSQL 16 e auditoria profunda com o modelo de 7B parâmetros.
+
 ---
 
-## 🌐 3. Dashboard Web & SVG Liquid Glass Shader
+## Dashboard Web e Shader de Vidro Líquido
 
-Painel de telemetria analítica com refração óptica de vidro líquido baseada em *Signed Distance Fields* (SDF), inspirada em [Shu Ding](https://github.com/shuding/liquid-glass).
+Pra você acompanhar as métricas do seu banco de dados de um jeito visual, criei um dashboard web com um efeito óptico de vidro líquido (Liquid Glass), inspirado nos experimentos de SVG de [Shu Ding](https://github.com/shuding/liquid-glass).
 
 <p align="center">
   <img src="assets/liquid-glass-macro.png" alt="Macro Refração Liquid Glass" width="100%" />
 </p>
 
+Abra o painel no seu navegador:
+
 ```powershell
 python src/dashboard.py --open
 ```
-- Acesse em: `http://localhost:8080` (ou terminal puro com `--cli`).
-- **Lente Óptica SVG:** Dynamic Island arrastável na página com refração física via `<feDisplacementMap>` e `<feGaussianBlur>` (52px).
-- **Controles ao Vivo:** Botões integrados para alternar refração ON/OFF, nível de desfoque e opacidade de fundo.
+
+O painel abre em `http://localhost:8080` (ou no terminal se você preferir passar `--cli`). A nossa pílula na página usa filtros SVG nativos (`<feDisplacementMap>` e `<feGaussianBlur>` com 52px de desfoque) pra distorcer os elementos que passam por trás dela, com controles pra você ajustar opacidade e refração ao vivo.
 
 ---
 
-## 💡 Destaques de Engenharia
+## Cuidados de Engenharia e Memória de Vídeo
 
-- **Idempotência em Camadas:** Hash SHA-256 calculado em blocos de 64 KB na aplicação + restrição `UNIQUE(hash_audio)` no PostgreSQL.
-- **Dimensionamento de VRAM (RTX 4050 6GB):** Whisper FP16 (~1.5 GB) + Ollama Q4_K_M (~1.9 GB) + buffers DWM (~0.8 GB) totalizam ~4.2 GB, prevenindo *CUDA Memory Paging* e garantindo inferência em ~1.5s.
-- **Calibração Fonética:** `TECH_INITIAL_PROMPT` condiciona o Whisper para vocabulário de tecnologia em português (*Python, Docker, FastAPI, SQL, API REST*).
+Quando eu comecei a juntar Whisper e LLM no mesmo computador, o meu maior cuidado foi não estourar os 6 GB de VRAM da minha placa de vídeo. Se a memória estoura, o Windows joga dados pra RAM e o seu tempo de resposta salta de 1.5s pra mais de 10s.
+
+Ajustei a distribuição de memória pra manter o seu setup leve e veloz:
+
+- **Faster-Whisper Medium FP16:** consome ~1.5 GB da sua VRAM.
+- **Ollama Qwen 2.5 (3B em Q4_K_M):** ocupa ~1.9 GB da sua VRAM.
+- **Buffers do Windows e DWM:** reservam cerca de ~0.8 GB da máquina.
+- **Total:** ~4.2 GB de VRAM ocupados, deixando uma folga segura nos 6 GB da GPU pra você manter o seu VS Code e navegador abertos sem engasgos.
+- **Calibração de vocabulário:** configurei um prompt fonético inicial (`TECH_INITIAL_PROMPT`) pra orientar o Whisper a reconhecer termos de tecnologia em português sem você ter que corrigir palavras como *Docker, FastAPI, SQL, PyTorch e Git*.
 
 ---
 
-## 📁 Estrutura do Repositório
+## Estrutura do Projeto
 
 ```text
 speech-to-prompt-pipeline/
-├── assets/                  # Identidade visual e imagens (Google Nano Banana)
-│   ├── app-icon.ico         # Ícone oficial para o atalho Windows
-│   ├── app-icon.png         # Logotipo em squircle (Favicon / Avatar)
-│   ├── hero-banner.png      # Capa panorâmica do GitHub
-│   ├── liquid-glass-macro.png # Macro da refração óptica SVG
-│   ├── pipeline-isometric.png # Infográfico 3D da arquitetura
-│   └── showcase-setup.png   # Mockup em setup de desenvolvimento
-├── sql/                     # Migrações SQL (Raw, Refined e Analytics)
+├── assets/                  # Identidade visual e imagens geradas com Nano Banana
+│   ├── app-icon.ico         # Ícone oficial pro atalho do Windows
+│   ├── app-icon.png         # Logo em squircle pra web e avatar
+│   ├── hero-banner.png      # Banner panorâmico do repositório
+│   ├── liquid-glass-macro.png # Detalhe da refração óptica SVG
+│   ├── pipeline-isometric.png # Diagrama 3D da arquitetura
+│   └── setup-desktop.png    # Pílula flutuante no fluxo de trabalho
+├── sql/                     # Migrações e tabelas do PostgreSQL
 ├── src/
-│   ├── config.py            # Centralizador de variáveis (.env)
-│   ├── database.py          # Conexão psycopg v3 e queries analíticas
-│   ├── ingest.py            # Ingestão SHA-256 e Faster-Whisper
-│   ├── rewrite.py           # Integração Ollama e prompt engineering
-│   ├── evaluate.py          # Curadoria humana e métricas de qualidade
-│   ├── dashboard.py         # Dashboard web com Liquid Glass e CLI
-│   └── live_pill.py         # Dynamic Island desktop com molas e atalho F8
-├── tools/criar_atalho.ps1   # Gerador do atalho na Área de Trabalho
-├── iniciar_live.vbs         # Lançador silencioso (sem console)
-├── docker-compose.yml       # Orquestração do PostgreSQL 16
-└── README.md                # Documentação técnica resumida
+│   ├── config.py            # Variáveis de ambiente e caminhos
+│   ├── database.py          # Conexão psycopg v3 e consultas SQL
+│   ├── ingest.py            # Ingestão de áudio, SHA-256 e Faster-Whisper
+│   ├── rewrite.py           # Prompt engineering e chamada ao Ollama
+│   ├── evaluate.py          # Interface de curadoria humana e métricas
+│   ├── dashboard.py         # Servidor web com Liquid Glass e modo CLI
+│   └── live_pill.py         # Dynamic Island em Tkinter com física e atalho F8
+├── tools/criar_atalho.ps1   # Script PowerShell pra gerar o atalho desktop
+├── iniciar_live.vbs         # Inicializador silencioso sem janela de prompt
+├── docker-compose.yml       # Configuração do PostgreSQL 16 Alpine
+└── README.md                # Documentação do projeto
 ```
 
 ---
 
-## 👤 Autor
+## Autor
 
-Desenvolvido por **Danilo Fernandes** como projeto de portfólio prático de **Engenharia de Dados e LLMOps**.
+Desenvolvido por **Danilo Fernandes** pra servir como projeto prático de portfólio em Engenharia de Dados e aplicações locais com modelos de linguagem.
+
 - GitHub: [@daniloofrs](https://github.com/daniloofrs)
