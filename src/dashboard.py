@@ -134,9 +134,9 @@ def render_html_dashboard(data: dict) -> str:
             align-items: center;
             margin: 16px 0 36px;
             padding: 18px 24px;
-            background: rgba(22, 22, 24, 0.72);
-            backdrop-filter: blur(24px) saturate(180%);
-            -webkit-backdrop-filter: blur(24px) saturate(180%);
+            background: rgba(20, 20, 24, 0.78);
+            backdrop-filter: blur(32px) saturate(190%);
+            -webkit-backdrop-filter: blur(32px) saturate(190%);
             border-radius: 20px;
             border: 1px solid var(--border-subtle);
             border-top: 1px solid var(--specular-top);
@@ -179,8 +179,8 @@ def render_html_dashboard(data: dict) -> str:
         }}
         .card {{
             background: var(--surface-glass);
-            backdrop-filter: blur(20px) saturate(180%);
-            -webkit-backdrop-filter: blur(20px) saturate(180%);
+            backdrop-filter: blur(28px) saturate(190%);
+            -webkit-backdrop-filter: blur(28px) saturate(190%);
             border: 1px solid var(--border-subtle);
             border-top: 1px solid var(--specular-top);
             border-radius: 20px;
@@ -226,8 +226,8 @@ def render_html_dashboard(data: dict) -> str:
         }}
         .table-container {{
             background: var(--surface-glass);
-            backdrop-filter: blur(24px) saturate(180%);
-            -webkit-backdrop-filter: blur(24px) saturate(180%);
+            backdrop-filter: blur(32px) saturate(190%);
+            -webkit-backdrop-filter: blur(32px) saturate(190%);
             border: 1px solid var(--border-subtle);
             border-top: 1px solid var(--specular-top);
             border-radius: 20px;
@@ -301,7 +301,7 @@ def render_html_dashboard(data: dict) -> str:
             left: 50%;
             transform: translateX(-50%);
             z-index: 1000;
-            width: 500px;
+            width: 550px;
             max-width: calc(100vw - 32px);
             padding: 8px 16px;
             border-radius: 9999px;
@@ -309,8 +309,8 @@ def render_html_dashboard(data: dict) -> str:
             user-select: none;
             touch-action: none;
             background: rgba(12, 12, 16, 0.88);
-            backdrop-filter: blur(28px) url(#liquid-glass-filter) saturate(190%) contrast(104%);
-            -webkit-backdrop-filter: blur(28px) url(#liquid-glass-filter) saturate(190%) contrast(104%);
+            backdrop-filter: blur(52px) url(#liquid-glass-filter) saturate(190%) contrast(104%);
+            -webkit-backdrop-filter: blur(52px) url(#liquid-glass-filter) saturate(190%) contrast(104%);
             border: 1px solid rgba(255, 255, 255, 0.12);
             border-top: 1px solid rgba(255, 255, 255, 0.35);
             box-shadow: 0 16px 40px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255, 255, 255, 0.05), inset 0 1px 1px rgba(255, 255, 255, 0.25);
@@ -325,11 +325,11 @@ def render_html_dashboard(data: dict) -> str:
             box-shadow: 0 24px 54px rgba(0, 0, 0, 0.78), 0 0 0 1px rgba(255, 255, 255, 0.16);
         }}
         .liquid-island.no-svg {{
-            backdrop-filter: blur(28px) saturate(190%) contrast(104%) !important;
-            -webkit-backdrop-filter: blur(28px) saturate(190%) contrast(104%) !important;
+            backdrop-filter: blur(52px) saturate(190%) contrast(104%) !important;
+            -webkit-backdrop-filter: blur(52px) saturate(190%) contrast(104%) !important;
         }}
         .liquid-island.expanded {{
-            width: 620px;
+            width: 660px;
             border-radius: 28px;
             padding: 14px 20px;
         }}
@@ -459,8 +459,9 @@ def render_html_dashboard(data: dict) -> str:
     <svg id="liquid-glass-svg" style="position: absolute; width: 0; height: 0; pointer-events: none; overflow: hidden;" aria-hidden="true">
         <defs>
             <filter id="liquid-glass-filter" filterUnits="userSpaceOnUse" x="0" y="0" width="100%" height="100%" color-interpolation-filters="sRGB">
+                <feGaussianBlur id="liquid-fe-blur" in="SourceGraphic" stdDeviation="26" result="blurred" />
                 <feImage id="liquid-fe-image" href="" result="displacementMap" preserveAspectRatio="none" />
-                <feDisplacementMap id="liquid-fe-disp" in="SourceGraphic" in2="displacementMap" xChannelSelector="R" yChannelSelector="G" scale="6" result="displaced" />
+                <feDisplacementMap id="liquid-fe-disp" in="blurred" in2="displacementMap" xChannelSelector="R" yChannelSelector="G" scale="6" result="displaced" />
             </filter>
         </defs>
     </svg>
@@ -473,6 +474,7 @@ def render_html_dashboard(data: dict) -> str:
         </div>
         <div class="island-controls">
             <button type="button" class="island-btn active" id="toggleRefractBtn" title="Alternar entre Refração Óptica SVG e Blur Padrão">Refração: ON</button>
+            <button type="button" class="island-btn" id="blurBtn" title="Alternar intensidade do desfoque do fundo">Desfoque: 52px</button>
             <button type="button" class="island-btn" id="opacityBtn" title="Alternar opacidade do fundo para leitura perfeita">Fundo: 88%</button>
             <button type="button" class="island-btn" id="resizeIslandBtn" title="Alternar tamanho da lente">Expandir</button>
         </div>
@@ -480,6 +482,14 @@ def render_html_dashboard(data: dict) -> str:
 
     <script>
         (function() {{
+            // Níveis de desfoque profundo para acabamento acetinado de alta legibilidade
+            const BLURS = [
+                {{ label: 'Desfoque: 52px', cssPx: '52px', stdDev: '26' }},
+                {{ label: 'Desfoque: 72px', cssPx: '72px', stdDev: '36' }},
+                {{ label: 'Desfoque: 32px', cssPx: '32px', stdDev: '16' }}
+            ];
+            let currentBlurIdx = 0;
+
             // Níveis de opacidade do fundo para conforto de leitura
             const OPACITIES = [
                 {{ label: 'Fundo: 88%', alpha: 0.88 }},
@@ -556,11 +566,26 @@ def render_html_dashboard(data: dict) -> str:
 
             const island = document.getElementById('liquidIsland');
             const filter = document.getElementById('liquid-glass-filter');
+            const feBlur = document.getElementById('liquid-fe-blur');
             const feImage = document.getElementById('liquid-fe-image');
             const feDisp = document.getElementById('liquid-fe-disp');
             const toggleBtn = document.getElementById('toggleRefractBtn');
+            const blurBtn = document.getElementById('blurBtn');
             const opacityBtn = document.getElementById('opacityBtn');
             const resizeBtn = document.getElementById('resizeIslandBtn');
+
+            function applyBackdropBlur() {{
+                const b = BLURS[currentBlurIdx];
+                if (feBlur) feBlur.setAttribute('stdDeviation', b.stdDev);
+                const isNoSvg = island.classList.contains('no-svg');
+                if (isNoSvg) {{
+                    island.style.backdropFilter = `blur(${{b.cssPx}}) saturate(190%) contrast(104%)`;
+                    island.style.webkitBackdropFilter = `blur(${{b.cssPx}}) saturate(190%) contrast(104%)`;
+                }} else {{
+                    island.style.backdropFilter = `blur(${{b.cssPx}}) url(#liquid-glass-filter) saturate(190%) contrast(104%)`;
+                    island.style.webkitBackdropFilter = `blur(${{b.cssPx}}) url(#liquid-glass-filter) saturate(190%) contrast(104%)`;
+                }}
+            }}
 
             function updateShader() {{
                 if (!island || !feImage || !feDisp || !filter) return;
@@ -583,6 +608,7 @@ def render_html_dashboard(data: dict) -> str:
                 feImage.setAttribute('href', dataUrl);
 
                 feDisp.setAttribute('scale', isExp ? '8' : '6');
+                applyBackdropBlur();
             }}
 
             // Alterna entre refracao SVG real e backdrop-filter blur generico
@@ -592,6 +618,18 @@ def render_html_dashboard(data: dict) -> str:
                     const isNoSvg = island.classList.toggle('no-svg');
                     toggleBtn.classList.toggle('active', !isNoSvg);
                     toggleBtn.textContent = isNoSvg ? 'Refração: OFF' : 'Refração: ON';
+                    applyBackdropBlur();
+                }});
+            }}
+
+            // Alterna intensidade do desfoque de fundo
+            if (blurBtn) {{
+                blurBtn.addEventListener('click', (e) => {{
+                    e.stopPropagation();
+                    currentBlurIdx = (currentBlurIdx + 1) % BLURS.length;
+                    const b = BLURS[currentBlurIdx];
+                    blurBtn.textContent = b.label;
+                    applyBackdropBlur();
                 }});
             }}
 
