@@ -77,7 +77,8 @@ def run_benchmark(audio_path: str):
     model = WhisperModel("medium", device="cuda", compute_type="float16")
 
     # Aquecimento completo da VRAM com o áudio real
-    list(model.transcribe(audio_path, language="pt", beam_size=1, without_timestamps=True))
+    _warm_segments, _ = model.transcribe(audio_path, language="pt", beam_size=1, without_timestamps=True)
+    list(_warm_segments)
     try:
         call_ollama("teste de aquecimento")
     except Exception:
