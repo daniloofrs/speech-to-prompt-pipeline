@@ -329,15 +329,20 @@ def ensure_ollama_running(host: str = OLLAMA_HOST) -> bool:
 
     logger.info("Ollama não está aberto. Iniciando serviço em segundo plano (silencioso)...")
     try:
-        flags = 0
+        popen_kwargs = {
+            "stdout": subprocess.DEVNULL,
+            "stderr": subprocess.DEVNULL,
+            "close_fds": True,
+        }
         if sys.platform == "win32":
-            flags = subprocess.CREATE_NO_WINDOW
+            DETACHED_PROCESS = 0x00000008
+            CREATE_NEW_PROCESS_GROUP = 0x00000200
+            flags = subprocess.CREATE_NO_WINDOW | DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+            popen_kwargs["creationflags"] = flags
 
         subprocess.Popen(
             ["ollama", "serve"],
-            creationflags=flags,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            **popen_kwargs,
         )
 
         for _ in range(24):
