@@ -786,8 +786,7 @@ class LivePillApp:
                             "Tempo limite de inatividade inicial (%.1fs). Cancelando...",
                             MAX_INITIAL_SILENCE_S,
                         )
-                        self._show_toast("Nenhuma fala detectada")
-                        self._stop_audio_capture()
+                        self._stop_audio_capture(reason_toast="Nenhuma fala detectada")
 
         if is_moving:
             self._apply_window_geometry()
@@ -1268,10 +1267,7 @@ class LivePillApp:
             except Exception as e:
                 logger.warning(f"Aviso na transcrição ao vivo: {e}")
 
-    def _stop_audio_capture(self) -> None:
-        if self.state != "recording":
-            return
-
+    def _stop_audio_capture(self, reason_toast: Optional[str] = None) -> None:
         # Sinaliza IMEDIATAMENTE a parada para o loop de streaming liberar a GPU
         self.stop_recording_event.set()
 
@@ -1283,14 +1279,23 @@ class LivePillApp:
                 pass
             self.audio_stream = None
 
+        if reason_toast is not None:
+            self.audio_chunks.clear()
+            self._show_toast(reason_toast)
+            return
+
+        if self.state != "recording":
+            return
+
         if not self.audio_chunks:
             self._transition_to("idle")
             return
 
-        final_audio = np.concatenate(self.audio_chunks).flatten()
+        final_audio = np.concatenate([c.reshape(-1) for c in self.audio_chunks])
         duration_s = len(final_audio) / SAMPLE_RATE
 
         if duration_s < 0.35:
+            self.audio_chunks.clear()
             self._show_toast("Fala muito curta")
             return
 
