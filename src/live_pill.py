@@ -512,6 +512,9 @@ class LivePillApp:
             self.root.deiconify()
             self.root.lift()
             self.root.attributes("-topmost", True)
+            if not self.models_ready:
+                self._show_toast("Aguarde: inicializando motor neural na GPU...")
+                return
             if self.state in ("idle", "toast", "result"):
                 self._start_audio_capture()
             elif self.state == "recording":
@@ -712,6 +715,9 @@ class LivePillApp:
 
         # Ação padrão ao tocar no corpo da Dynamic Island
         if self.state in ("idle", "toast"):
+            if not self.models_ready:
+                self._show_toast("Aguarde: inicializando motor neural na GPU...")
+                return
             self._start_audio_capture()
         elif self.state == "recording":
             self._stop_audio_capture()
@@ -1326,11 +1332,13 @@ class LivePillApp:
             # Garante acesso exclusivo à GPU com o lock
             with self.transcribe_lock:
                 wait_ticks = 0
-                while self.whisper_model is None and wait_ticks < 60:
+                while self.whisper_model is None and wait_ticks < 150:
                     time.sleep(0.1)
                     wait_ticks += 1
                 if self.whisper_model is None:
-                    self.whisper_model = self._instantiate_whisper()
+                    logger.error("Motor neural indisponível: tempo limite de carregamento excedido.")
+                    self.ui_queue.put(("error", "Motor neural indisponível"))
+                    return
 
                 norm_audio = normalize_audio(audio_data)
                 logger.info(f"Executando transcrição final otimizada (beam_size={LIVE_WHISPER_BEAM_SIZE})...")
@@ -1370,7 +1378,6 @@ class LivePillApp:
         except Exception as error:
             logger.error(f"Erro no pipeline final: {error}")
             self.ui_queue.put(("error", "Falha ao processar"))
-            self.ui_queue.put(("error", "Falha ao processar"))
 
     def _show_toast(self, message: str) -> None:
         self._transition_to("toast", toast_text=message)
@@ -1402,6 +1409,9 @@ class LivePillApp:
         self.root.after(60, self._start_queue_listener)
 
     def _on_new_record_click(self) -> None:
+        if not self.models_ready:
+            self._show_toast("Aguarde: inicializando motor neural na GPU...")
+            return
         self._start_audio_capture()
 
     def _on_copy_again_click(self) -> None:
@@ -1450,7 +1460,12 @@ class LivePillApp:
             except Exception as e:
                 logger.warning(f"Aviso no pré-aquecimento do Ollama: {e}")
 
-            self.ui_queue.put(("models_ready", True))
+            if self.whisper_model is not None:
+                logger.info("Motor neural pronto para transcrição.")
+                self.ui_queue.put(("models_ready", True))
+            else:
+                logger.error("Falha ao inicializar o Whisper na GPU. Motor neural indisponível.")
+                self.ui_queue.put(("error", "Falha ao inicializar motor neural"))
 
         threading.Thread(target=init_all, daemon=True).start()
 
