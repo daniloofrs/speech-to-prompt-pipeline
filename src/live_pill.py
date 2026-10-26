@@ -360,6 +360,81 @@ def ensure_ollama_running(host: str = OLLAMA_HOST) -> bool:
     return False
 
 
+def ensure_windows_mic_unmuted() -> Tuple[bool, bool]:
+    """Verifica e desmuta o microfone padrão do Windows via CoreAudio se estiver mutado.
+
+    Retorna (was_muted, success).
+    """
+    if sys.platform != "win32":
+        return False, True
+    try:
+        import ctypes
+        from ctypes import wintypes, Structure, byref, HRESULT, POINTER, c_void_p
+
+        class GUID(Structure):
+            _fields_ = [
+                ("Data1", wintypes.DWORD),
+                ("Data2", wintypes.WORD),
+                ("Data3", wintypes.WORD),
+                ("Data4", wintypes.BYTE * 8),
+            ]
+            def __init__(self, l=0, w1=0, w2=0, b1=0, b2=0, b3=0, b4=0, b5=0, b6=0, b7=0, b8=0):
+                self.Data1 = l
+                self.Data2 = w1
+                self.Data3 = w2
+                self.Data4 = (wintypes.BYTE * 8)(b1, b2, b3, b4, b5, b6, b7, b8)
+
+        CLSID_MMDeviceEnumerator = GUID(0xBCDE0395, 0xE52F, 0x467C, 0x8E, 0x3D, 0xC4, 0x57, 0x92, 0x91, 0x69, 0x2E)
+        IID_IMMDeviceEnumerator = GUID(0xA95664D2, 0x9614, 0x4F35, 0xA7, 0x46, 0xDE, 0x8D, 0xB6, 0x36, 0x17, 0xE6)
+        IID_IAudioEndpointVolume = GUID(0x5CDF2C82, 0x841E, 0x4546, 0x97, 0x22, 0x0C, 0xF7, 0x40, 0x78, 0x22, 0x9A)
+
+        ole32 = ctypes.oledll.ole32
+        ole32.CoInitialize(None)
+
+        enumerator = c_void_p()
+        hr = ole32.CoCreateInstance(
+            byref(CLSID_MMDeviceEnumerator),
+            None,
+            1,
+            byref(IID_IMMDeviceEnumerator),
+            byref(enumerator),
+        )
+        if hr != 0 or not enumerator:
+            return False, True
+
+        def call_vtable(iface_ptr, method_idx, restype, *argtypes):
+            vtable = ctypes.cast(iface_ptr, POINTER(POINTER(c_void_p))).contents
+            func_type = ctypes.WINFUNCTYPE(restype, c_void_p, *argtypes)
+            return func_type(vtable[method_idx])
+
+        get_default_endpoint = call_vtable(enumerator, 4, HRESULT, wintypes.INT, wintypes.INT, POINTER(c_void_p))
+        device = c_void_p()
+        hr = get_default_endpoint(enumerator, 1, 0, byref(device))  # eCapture=1, eConsole=0
+        if hr != 0 or not device:
+            return False, True
+
+        activate = call_vtable(device, 3, HRESULT, POINTER(GUID), wintypes.DWORD, c_void_p, POINTER(c_void_p))
+        endpoint_vol = c_void_p()
+        hr = activate(device, byref(IID_IAudioEndpointVolume), 23, None, byref(endpoint_vol))
+        if hr != 0 or not endpoint_vol:
+            return False, True
+
+        get_mute = call_vtable(endpoint_vol, 15, HRESULT, POINTER(wintypes.BOOL))
+        is_muted = wintypes.BOOL()
+        get_mute(endpoint_vol, byref(is_muted))
+        was_muted = bool(is_muted.value)
+
+        if was_muted:
+            set_mute = call_vtable(endpoint_vol, 14, HRESULT, wintypes.BOOL, POINTER(GUID))
+            hr = set_mute(endpoint_vol, 0, None)
+            return True, (hr == 0)
+
+        return False, True
+    except Exception as exc:
+        logger.debug(f"Aviso ao consultar mute no Windows: {exc}")
+        return False, True
+
+
 def fast_call_ollama(text: str) -> str:
     """Chamada ultra-otimizada ao Ollama: auto-start silencioso, keep_alive em VRAM e retorno imperativo direto."""
     endpoint = f"{OLLAMA_HOST.rstrip('/')}/api/chat"
@@ -1219,6 +1294,17 @@ class LivePillApp:
         self.is_silence_countdown = False
         self.accumulated_speech_s = 0.0
 
+        # No Windows, verifica e desmuta proativamente o microfone se estiver mutado no sistema
+        if sys.platform == "win32":
+            was_muted, success = ensure_windows_mic_unmuted()
+            if was_muted:
+                if success:
+                    logger.info("Microfone estava mutado no Windows. Desmutado com sucesso.")
+                    self._show_toast("Microfone desmutado no Windows!")
+                else:
+                    logger.warning("Microfone do Windows está mutado e não pôde ser desmutado.")
+                    self._show_toast("Aviso: Microfone mutado no Windows!")
+
         self._transition_to("recording")
         play_chime("start")
 
@@ -1230,6 +1316,14 @@ class LivePillApp:
             self.current_rms = float(np.sqrt(np.mean(chunk ** 2)))
 
         try:
+            dev_idx = sd.default.device[0]
+            dev_name = "Padrão"
+            if dev_idx is not None and dev_idx >= 0:
+                try:
+                    dev_name = sd.query_devices(dev_idx).get("name", "Padrão")
+                except Exception:
+                    pass
+
             self.audio_stream = sd.InputStream(
                 samplerate=SAMPLE_RATE,
                 channels=1,
@@ -1237,7 +1331,7 @@ class LivePillApp:
                 callback=audio_callback,
             )
             self.audio_stream.start()
-            logger.info("Microfone ativo. Transcrição ao vivo iniciada...")
+            logger.info(f"Microfone ativo: [{dev_name}]. Transcrição ao vivo iniciada...")
 
             threading.Thread(target=self._live_transcribe_loop, daemon=True).start()
 
