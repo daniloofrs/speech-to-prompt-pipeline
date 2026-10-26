@@ -439,7 +439,8 @@ class LivePillApp:
         self.has_spoken: bool = False
         self.last_speech_time: float = 0.0
         self.is_silence_countdown: bool = False
-        self.ambient_rms_floor: float = 0.006
+        self.ambient_rms_floor: float = 0.003
+        self.accumulated_speech_s: float = 0.0
 
         # IDs e caches de alta performance para o Canvas (Zero Garbage Collection por frame)
         self.wave_bar_ids: List[Tuple[int, float, float]] = []
@@ -764,21 +765,32 @@ class LivePillApp:
 
             # Detecção de silêncio inteligente (Hands-Free Auto-Stop)
             if AUTO_STOP_ON_SILENCE:
-                speech_threshold = min(0.028, max(SILENCE_THRESHOLD_RMS, self.ambient_rms_floor * 2.0))
+                speech_threshold = min(0.024, max(0.007, self.ambient_rms_floor * 2.2))
                 if self.smoothed_rms > speech_threshold:
                     self.has_spoken = True
                     self.last_speech_time = wall_now
                     self.is_silence_countdown = False
+                    self.accumulated_speech_s += dt
                 elif self.has_spoken:
-                    silence_elapsed = wall_now - self.last_speech_time
-                    if silence_elapsed >= 0.75:
-                        self.is_silence_countdown = True
-                    if silence_elapsed >= SILENCE_TIMEOUT_S:
-                        logger.info(
-                            "Silêncio de %.1fs detectado após fala. Auto-concluindo transcrição...",
-                            SILENCE_TIMEOUT_S,
-                        )
-                        self._stop_audio_capture()
+                    if self.accumulated_speech_s >= 0.5:
+                        silence_elapsed = wall_now - self.last_speech_time
+                        if silence_elapsed >= 0.75:
+                            self.is_silence_countdown = True
+                        if silence_elapsed >= SILENCE_TIMEOUT_S:
+                            logger.info(
+                                "Silêncio de %.1fs detectado após fala. Auto-concluindo transcrição...",
+                                SILENCE_TIMEOUT_S,
+                            )
+                            self._stop_audio_capture()
+                    else:
+                        # Micro-blip que ainda não atingiu 0.5s de fala acumulada:
+                        # Se passar muito tempo sem fala contínua, trata como inatividade inicial
+                        if (wall_now - self.record_start_time) >= MAX_INITIAL_SILENCE_S:
+                            logger.info(
+                                "Tempo limite de inatividade inicial (%.1fs). Cancelando...",
+                                MAX_INITIAL_SILENCE_S,
+                            )
+                            self._stop_audio_capture(reason_toast="Nenhuma fala detectada")
                 else:
                     # Inatividade inicial prolongada (ex: pressionou F8 por engano)
                     if (wall_now - self.record_start_time) >= MAX_INITIAL_SILENCE_S:
@@ -1184,6 +1196,7 @@ class LivePillApp:
         self.has_spoken = False
         self.last_speech_time = time.time()
         self.is_silence_countdown = False
+        self.accumulated_speech_s = 0.0
 
         self._transition_to("recording")
         play_chime("start")
