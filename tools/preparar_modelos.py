@@ -67,18 +67,6 @@ def cleanup_incomplete_cache(repo_id: str = "Systran/faster-whisper-medium") -> 
     removed_count = 0
     freed_bytes = 0
 
-    if blobs_dir.exists():
-        for incomplete_file in blobs_dir.glob("*.incomplete"):
-            try:
-                size = incomplete_file.stat().st_size
-                incomplete_file.unlink()
-                removed_count += 1
-                freed_bytes += size
-                print(f"  [REMOVIDO] blobs/{incomplete_file.name} ({size / (1024 * 1024):.1f} MB)")
-            except OSError as e:
-                print(f"  [AVISO] Falha ao remover {incomplete_file.name}: {e}")
-
-    # Checa também quaisquer outros .incomplete dentro do repositório
     if model_dir.exists():
         for incomplete_file in model_dir.glob("**/*.incomplete"):
             try:
@@ -87,8 +75,8 @@ def cleanup_incomplete_cache(repo_id: str = "Systran/faster-whisper-medium") -> 
                 removed_count += 1
                 freed_bytes += size
                 print(f"  [REMOVIDO] {incomplete_file.relative_to(model_dir)} ({size / (1024 * 1024):.1f} MB)")
-            except OSError:
-                pass
+            except OSError as e:
+                print(f"  [AVISO] Falha ao remover {incomplete_file.name}: {e}")
 
     return removed_count, freed_bytes
 

@@ -528,6 +528,7 @@ class LivePillApp:
 
     def destroy(self) -> None:
         """Encerra a aplicação de forma limpa desregistrando hotkeys e parando streams."""
+        self.stop_recording_event.set()
         if self.hotkey_listener:
             try:
                 self.hotkey_listener.stop()
@@ -539,6 +540,7 @@ class LivePillApp:
                 self.audio_stream.close()
             except Exception:
                 pass
+            self.audio_stream = None
         try:
             self.root.destroy()
         except Exception:
@@ -1198,6 +1200,14 @@ class LivePillApp:
         if self.state == "processing":
             return
 
+        if self.audio_stream:
+            try:
+                self.audio_stream.stop()
+                self.audio_stream.close()
+            except Exception:
+                pass
+            self.audio_stream = None
+
         self.audio_chunks = []
         self.live_transcript = ""
         self.current_rms = 0.0
@@ -1316,6 +1326,7 @@ class LivePillApp:
             return
 
         final_audio = np.concatenate([c.reshape(-1) for c in self.audio_chunks])
+        self.audio_chunks.clear()
         duration_s = len(final_audio) / SAMPLE_RATE
 
         if duration_s < 0.35:
