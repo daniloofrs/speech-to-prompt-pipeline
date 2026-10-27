@@ -566,6 +566,8 @@ class LivePillApp:
         self.last_timer_text: str = ""
         self.orb_outer_id: Optional[int] = None
         self.orb_inner_id: Optional[int] = None
+        self.live_text_id: Optional[int] = None
+        self.last_displayed_transcript: str = ""
         self.last_applied_geometry: Tuple[int, int, int, int] = (0, 0, 0, 0)
 
         self.ui_queue: queue.Queue = queue.Queue()
@@ -1135,7 +1137,7 @@ class LivePillApp:
         display_text = self.live_transcript if has_words else "Fale naturalmente, suas palavras aparecem aqui..."
         text_color = WATER_TEXT_PRIMARY if has_words else WATER_TEXT_SECONDARY
 
-        self.canvas.create_text(
+        self.live_text_id = self.canvas.create_text(
             26.0,
             bubble_top + 10.0,
             text=display_text,
@@ -1144,9 +1146,10 @@ class LivePillApp:
             width=max(180, int(w - 52)),
             font=("Segoe UI Semibold" if has_words else "Segoe UI", 10),
         )
+        self.last_displayed_transcript = self.live_transcript
 
     def _fast_update_recording_bars(self) -> None:
-        """Atualiza apenas as coordenadas das 5 barras de onda e do cronômetro sem destruir o canvas."""
+        """Atualiza em tempo real as 5 barras de onda, cronômetro e texto ao vivo sem garbage collection."""
         if not self.wave_bar_ids:
             return
         for i, (bar_id, bx, top_y) in enumerate(self.wave_bar_ids):
@@ -1154,6 +1157,17 @@ class LivePillApp:
                 val = self.wave_bars[i]
                 bar_h = max(4.0, val * 18.0)
                 self.canvas.coords(bar_id, bx, top_y - bar_h / 2.0, bx, top_y + bar_h / 2.0)
+
+        # Sincroniza instantaneamente o texto transcrito em 60 FPS
+        if self.live_text_id and self.live_transcript != getattr(self, "last_displayed_transcript", ""):
+            self.last_displayed_transcript = self.live_transcript
+            has_w = bool(self.live_transcript.strip())
+            self.canvas.itemconfig(
+                self.live_text_id,
+                text=self.live_transcript if has_w else "Fale naturalmente, suas palavras aparecem aqui...",
+                fill=WATER_TEXT_PRIMARY if has_w else WATER_TEXT_SECONDARY,
+                font=("Segoe UI Semibold" if has_w else "Segoe UI", 10),
+            )
 
         if self.record_timer_id:
             elapsed = int(time.time() - self.record_start_time)
@@ -1377,6 +1391,7 @@ class LivePillApp:
 
         self.audio_chunks = []
         self.live_transcript = ""
+        self.last_displayed_transcript = ""
         self.current_rms = 0.0
         self.smoothed_rms = 0.0
         self.record_start_time = time.time()
@@ -1435,19 +1450,19 @@ class LivePillApp:
         """Loop que transcreve blocos de fala em tempo real na GPU de forma não-bloqueante."""
         last_processed_len = 0
         while not self.stop_recording_event.is_set() and self.state == "recording":
-            # Dorme em fatias curtas de 100ms para responder instantaneamente ao stop_recording_event
-            for _ in range(8):  # ~0.8s
+            # Dorme em fatias curtas de 35ms (~140ms total) para responder instantaneamente à fala
+            for _ in range(4):
                 if self.stop_recording_event.is_set() or self.state != "recording":
                     return
-                time.sleep(0.1)
+                time.sleep(0.035)
 
-            if len(self.audio_chunks) < 3:
+            if len(self.audio_chunks) < 2:
                 continue
 
             try:
                 audio_snapshot = np.concatenate(list(self.audio_chunks)).flatten()
-                # Só processa se houver ao menos 0.7s de áudio total e 0.4s de novos dados
-                if len(audio_snapshot) < SAMPLE_RATE * 0.7 or (len(audio_snapshot) - last_processed_len) < SAMPLE_RATE * 0.4:
+                # Processa assim que houver ao menos 0.35s de áudio total e 0.18s de novos dados
+                if len(audio_snapshot) < SAMPLE_RATE * 0.35 or (len(audio_snapshot) - last_processed_len) < SAMPLE_RATE * 0.18:
                     continue
                 if self.whisper_model is None:
                     continue
@@ -1473,7 +1488,7 @@ class LivePillApp:
                         condition_on_previous_text=False,
                         without_timestamps=True,
                         vad_filter=True,
-                        vad_parameters=dict(min_silence_duration_ms=250, speech_pad_ms=150),
+                        vad_parameters=dict(min_silence_duration_ms=200, speech_pad_ms=100),
                     )
                     partial_text = " ".join(s.text.strip() for s in segments).strip()
 
@@ -1603,9 +1618,19 @@ class LivePillApp:
             while not self.ui_queue.empty():
                 msg_type, payload = self.ui_queue.get_nowait()
                 if msg_type == "live_update" and self.state == "recording":
-                    # Expande suavemente a altura da Dynamic Island se a fala for longa
+                    # Atualiza o texto imediatamente no Canvas
+                    if self.live_text_id:
+                        has_w = bool(payload.strip())
+                        self.canvas.itemconfig(
+                            self.live_text_id,
+                            text=payload if has_w else "Fale naturalmente, suas palavras aparecem aqui...",
+                            fill=WATER_TEXT_PRIMARY if has_w else WATER_TEXT_SECONDARY,
+                            font=("Segoe UI Semibold" if has_w else "Segoe UI", 10),
+                        )
+                        self.last_displayed_transcript = payload
+                    # Expande suavemente a altura da pílula se a fala for longa
                     lines = max(1, math.ceil(len(payload) / 48))
-                    target_h = min(190.0, max(118.0, 68.0 + lines * 22.0))
+                    target_h = min(190.0, max(124.0, 72.0 + lines * 22.0))
                     self.spring_h.set_target(target_h, damping=1.0, response=0.28)
                 elif msg_type == "models_ready":
                     self.models_ready = True
@@ -1621,7 +1646,7 @@ class LivePillApp:
         except Exception:
             pass
 
-        self.root.after(60, self._start_queue_listener)
+        self.root.after(20, self._start_queue_listener)
 
     def _on_new_record_click(self) -> None:
         if not self.models_ready:
