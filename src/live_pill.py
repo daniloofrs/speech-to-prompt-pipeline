@@ -47,6 +47,7 @@ from faster_whisper import WhisperModel
 
 from src.config import (
     AUTO_STOP_ON_SILENCE,
+    LLM_BACKEND,
     LIVE_HOTKEY,
     LIVE_OLLAMA_MODEL,
     LIVE_WHISPER_BEAM_SIZE,
@@ -58,6 +59,7 @@ from src.config import (
     WHISPER_COMPUTE_TYPE,
     WHISPER_DEVICE,
 )
+from src.embedded_llm import EmbeddedLLM
 from src.rewrite import parse_llm_response
 
 logging.basicConfig(
@@ -502,6 +504,9 @@ class LivePillApp:
         self.audio_chunks: List[np.ndarray] = []
         self.audio_stream: Optional[sd.InputStream] = None
         self.whisper_model: Optional[WhisperModel] = None
+        self.embedded_llm: Optional[EmbeddedLLM] = None
+        if LLM_BACKEND == "embedded":
+            self.embedded_llm = EmbeddedLLM()
         self.record_start_time = 0.0
         self.current_rms = 0.0
         self.smoothed_rms = 0.0
@@ -1472,13 +1477,26 @@ class LivePillApp:
                 self.ui_queue.put(("error", "Nenhuma fala detectada"))
                 return
 
-            logger.info("Reescrevendo com Ollama em modo otimizado...")
-            t0 = time.time()
-            llm_output = fast_call_ollama(raw_text)
-            logger.info(f"Ollama respondeu em {time.time()-t0:.2f}s")
-
-            pedido, _ = parse_llm_response(llm_output)
-            final_prompt = pedido if (pedido and pedido.lower() != "nenhuma") else llm_output
+            final_prompt = raw_text
+            if LLM_BACKEND == "embedded":
+                logger.info("Reescrevendo prompt com EmbeddedLLM (in-process GPU)...")
+                t0 = time.time()
+                if self.embedded_llm is None:
+                    self.embedded_llm = EmbeddedLLM()
+                rewritten = self.embedded_llm.rewrite_prompt(raw_text)
+                logger.info(f"EmbeddedLLM respondeu em {time.time()-t0:.2f}s: \"{rewritten}\"")
+                if rewritten:
+                    final_prompt = rewritten
+            elif LLM_BACKEND == "ollama":
+                logger.info("Reescrevendo com Ollama em modo otimizado...")
+                t0 = time.time()
+                llm_output = fast_call_ollama(raw_text)
+                logger.info(f"Ollama respondeu em {time.time()-t0:.2f}s")
+                pedido, _ = parse_llm_response(llm_output)
+                final_prompt = pedido if (pedido and pedido.lower() != "nenhuma") else llm_output
+            else:
+                logger.info(f"LLM_BACKEND='{LLM_BACKEND}': mantendo transcrição direta.")
+                final_prompt = raw_text
 
             pyperclip.copy(final_prompt)
             logger.info("Prompt pronto copiado para a área de transferência!")
@@ -1553,7 +1571,7 @@ class LivePillApp:
             )
 
     def _load_models_in_background(self) -> None:
-        """Carrega e aquece Whisper e Ollama na GPU em background."""
+        """Carrega e aquece Whisper e o motor LLM (Embedded ou Ollama) na GPU em background."""
         def init_all():
             try:
                 logger.info(f"Pré-carregando Whisper '{LIVE_WHISPER_MODEL}' na GPU...")
@@ -1562,13 +1580,32 @@ class LivePillApp:
             except Exception as e:
                 logger.warning(f"Aviso no carregamento do Whisper: {e}")
 
-            try:
-                logger.info(f"Pré-aquecendo Ollama '{FAST_OLLAMA_MODEL}' na memória da GPU...")
-                t0 = time.time()
-                fast_call_ollama("teste de aquecimento")
-                logger.info(f"Ollama '{FAST_OLLAMA_MODEL}' aquecido e pronto na GPU em {time.time()-t0:.2f}s!")
-            except Exception as e:
-                logger.warning(f"Aviso no pré-aquecimento do Ollama: {e}")
+            if LLM_BACKEND == "embedded":
+                try:
+                    logger.info("Inicializando EmbeddedLLM (GGUF in-process) na GPU...")
+                    t0 = time.time()
+                    if self.embedded_llm is None:
+                        self.embedded_llm = EmbeddedLLM()
+                    loaded = self.embedded_llm.load_model()
+                    if loaded:
+                        self.embedded_llm.warmup()
+                        logger.info(f"EmbeddedLLM aquecido e pronto na GPU em {time.time()-t0:.2f}s!")
+                    else:
+                        logger.warning("Aviso: Falha ao carregar modelo GGUF no EmbeddedLLM. Executará com fallback direto.")
+                        self.ui_queue.put(("error", "GGUF ausente: usando modo direto"))
+                except Exception as e:
+                    logger.warning(f"Aviso no pré-carregamento do EmbeddedLLM: {e}")
+                    self.ui_queue.put(("error", "GGUF ausente: usando modo direto"))
+            elif LLM_BACKEND == "ollama":
+                try:
+                    logger.info(f"Pré-aquecendo Ollama '{FAST_OLLAMA_MODEL}' na memória da GPU...")
+                    t0 = time.time()
+                    fast_call_ollama("teste de aquecimento")
+                    logger.info(f"Ollama '{FAST_OLLAMA_MODEL}' aquecido e pronto na GPU em {time.time()-t0:.2f}s!")
+                except Exception as e:
+                    logger.warning(f"Aviso no pré-aquecimento do Ollama: {e}")
+            else:
+                logger.info(f"LLM_BACKEND='{LLM_BACKEND}' ativo (modo direto sem LLM).")
 
             if self.whisper_model is not None:
                 logger.info("Motor neural pronto para transcrição.")
@@ -1586,8 +1623,13 @@ def main() -> None:
     print("\n>>> Dynamic Island (Apple Fluid Design) Ativa!")
     print(f"    - Atalho Global no Windows: [{LIVE_HOTKEY}] (grave e pare de qualquer app)")
     print(f"    - Modelo de Fala: Whisper '{LIVE_WHISPER_MODEL}' (GPU RTX 4050)")
-    print(f"    - Modelo de Reescrita: Ollama '{FAST_OLLAMA_MODEL}' (Ultra Rápido)")
-    print("    - Física de molas contínuas (60 FPS), ondas reativas de voz e projeção de momento.")
+    if LLM_BACKEND == "embedded":
+        print("    - Motor LLM: In-Process Local GGUF (GPU RTX 4050, sem servidores externos)")
+    elif LLM_BACKEND == "ollama":
+        print(f"    - Motor LLM: Ollama '{FAST_OLLAMA_MODEL}' (Servidor Local)")
+    else:
+        print(f"    - Motor LLM: Direto ({LLM_BACKEND})")
+    print("    - Física de molas contínuas (60 FPS), ondas reativas de voz e VAD inteligente.")
     print("    - Prompt refinado copiado instantaneamente para o Ctrl+V.\n")
     try:
         root.mainloop()

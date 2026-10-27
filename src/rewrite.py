@@ -36,6 +36,7 @@ if sys.platform == "win32":
 import psycopg
 
 from src.config import (
+    LLM_BACKEND,
     OLLAMA_HOST,
     OLLAMA_MODEL,
     OLLAMA_TEMPERATURE,
@@ -46,6 +47,7 @@ from src.database import (
     init_db,
     insert_prompt,
 )
+from src.embedded_llm import EmbeddedLLM
 
 # Configuracao de logs padronizada para terminal
 logging.basicConfig(
@@ -199,7 +201,10 @@ def display_side_by_side(
     print(border + "\n")
 
 
-def run_rewrite(transcription_id: Optional[int] = None) -> None:
+def run_rewrite(
+    transcription_id: Optional[int] = None,
+    backend: Optional[str] = None,
+) -> None:
     """Executa a etapa de reescrita a partir do banco de dados."""
     # 1. Garante que as tabelas existam
     try:
@@ -232,23 +237,36 @@ def run_rewrite(transcription_id: Optional[int] = None) -> None:
         f"Processando transcricao ID {transc_id} (Arquivo: '{file_name}', Tamanho texto: {len(raw_text)} chars)"
     )
 
-    # 3. Chama o LLM via Ollama
+    # 3. Chama o LLM (Embedded GGUF, Ollama ou Direto)
+    active_backend = backend or LLM_BACKEND
+    model_saved_name = OLLAMA_MODEL
     try:
-        llm_output = call_ollama(raw_text)
+        if active_backend == "embedded":
+            logger.info("Executando reescrita via EmbeddedLLM (GGUF in-process na GPU)...")
+            embedded_llm = EmbeddedLLM()
+            pedido = embedded_llm.rewrite_prompt(raw_text)
+            duvidas = "nenhuma"
+            model_saved_name = "embedded:" + embedded_llm.model_path.name
+        elif active_backend == "ollama":
+            llm_output = call_ollama(raw_text)
+            pedido, duvidas = parse_llm_response(llm_output)
+            model_saved_name = OLLAMA_MODEL
+        else:
+            logger.info("Modo direto ativo: mantendo texto da transcricao.")
+            pedido = raw_text
+            duvidas = "nenhuma"
+            model_saved_name = "direct"
     except Exception as exc:
         logger.error(f"Falha ao gerar reescrita com LLM: {exc}")
         sys.exit(1)
 
-    # 4. Processa a resposta
-    pedido, duvidas = parse_llm_response(llm_output)
-
-    # 5. Salva na tabela 'prompts'
+    # 4. Salva na tabela 'prompts'
     try:
         prompt_id = insert_prompt(
             transcription_id=transc_id,
             pedido=pedido,
             duvidas=duvidas,
-            model_name=OLLAMA_MODEL,
+            model_name=model_saved_name,
         )
         logger.info(
             f"SUCESSO: Prompt salvo com ID {prompt_id} vinculado a transcricao ID {transc_id}."
@@ -257,13 +275,13 @@ def run_rewrite(transcription_id: Optional[int] = None) -> None:
         logger.error("Erro ao gravar prompt no banco de dados.")
         sys.exit(1)
 
-    # 6. Exibe a comparacao lado a lado no terminal
+    # 5. Exibe a comparacao lado a lado no terminal
     display_side_by_side(raw_text=raw_text, pedido=pedido, duvidas=duvidas)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Reescreve transcricoes de fala em pedidos claros para IA usando LLM local (Ollama)."
+        description="Reescreve transcricoes de fala em pedidos claros para IA usando LLM local embutido ou Ollama."
     )
     parser.add_argument(
         "--id",
@@ -271,9 +289,16 @@ def main() -> None:
         default=None,
         help="ID da transcricao a ser reescrita. Se omitido, utiliza a mais recente cadastrada.",
     )
+    parser.add_argument(
+        "--backend",
+        type=str,
+        default=None,
+        choices=["embedded", "ollama", "direct"],
+        help="Backend do LLM a ser utilizado ('embedded', 'ollama', 'direct'). Se omitido, usa a configuracao do .env.",
+    )
 
     args = parser.parse_args()
-    run_rewrite(transcription_id=args.id)
+    run_rewrite(transcription_id=args.id, backend=args.backend)
 
 
 if __name__ == "__main__":

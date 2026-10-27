@@ -39,15 +39,19 @@ sys.path.insert(0, str(_project_root))
 
 from faster_whisper import WhisperModel
 import huggingface_hub
-from huggingface_hub import snapshot_download
+from huggingface_hub import hf_hub_download, snapshot_download
 from huggingface_hub.constants import HF_HUB_CACHE
 from src.config import (
+    BASE_DIR,
+    EMBEDDED_MODEL_PATH,
+    LLM_BACKEND,
     LIVE_OLLAMA_MODEL,
     OLLAMA_HOST,
     WHISPER_COMPUTE_TYPE,
     WHISPER_DEVICE,
     WHISPER_MODEL,
 )
+from src.embedded_llm import EmbeddedLLM
 
 REQUIRED_SNAPSHOT_FILES = [
     "config.json",
@@ -135,6 +139,54 @@ def prepare_whisper(
     load_time = time.perf_counter() - t0
     print(f"[OK] WhisperModel('{model_size}') pronto na GPU ({device} / {compute_type}) em {load_time:.2f}s!")
     return model
+
+
+def prepare_embedded_llm(model_path_str: str = EMBEDDED_MODEL_PATH) -> EmbeddedLLM:
+    """Garante que o modelo GGUF esteja na pasta models/ e realiza teste de inferência na GPU."""
+    model_path = Path(model_path_str)
+    if not model_path.is_absolute():
+        model_path = BASE_DIR / model_path
+
+    model_dir = model_path.parent
+    model_dir.mkdir(parents=True, exist_ok=True)
+
+    filename = model_path.name
+    repo_id = "Qwen/Qwen2.5-1.5B-Instruct-GGUF"
+
+    print(f"\n[2/3] Verificando e preparando LLM local embutido ({filename})...")
+
+    # Se o arquivo não existir ou for menor que 500 MB (corrompido/incompleto)
+    if not model_path.exists() or model_path.stat().st_size < 500 * 1024 * 1024:
+        print(f"[INFO] Baixando modelo GGUF de '{repo_id}' para '{model_dir}'...")
+        downloaded_path = hf_hub_download(
+            repo_id=repo_id,
+            filename=filename,
+            local_dir=str(model_dir),
+        )
+        print(f"[OK] Download concluído com sucesso: {downloaded_path}")
+    else:
+        size_mb = model_path.stat().st_size / (1024 * 1024)
+        print(f"[OK] Arquivo GGUF existente validado: {model_path.name} ({size_mb:.1f} MB)")
+
+    # Carrega e valida inferência na GPU
+    print("[INFO] Instanciando EmbeddedLLM na GPU RTX...")
+    t0 = time.perf_counter()
+    llm = EmbeddedLLM(model_path=str(model_path))
+    if not llm.load_model():
+        raise RuntimeError("Falha ao inicializar o motor llama-cpp na GPU.")
+
+    load_time = time.perf_counter() - t0
+    print(f"[OK] EmbeddedLLM carregado na VRAM em {load_time:.2f}s!")
+
+    # Teste de inferência
+    print("[INFO] Executando inferência de teste com EmbeddedLLM...")
+    t1 = time.perf_counter()
+    test_prompt = llm.rewrite_prompt("cria uma funcao em python pra ordenar uma lista com quicksort")
+    inf_time = time.perf_counter() - t1
+    print(f"[OK] Prompt refinado gerado em {inf_time:.2f}s:")
+    print(f"     -> \"{test_prompt}\"")
+
+    return llm
 
 
 def ensure_ollama_running(host: str = OLLAMA_HOST, timeout_seconds: int = 15) -> bool:
@@ -232,6 +284,7 @@ def verify_ollama_model(model_name: str = LIVE_OLLAMA_MODEL, host: str = OLLAMA_
 def main() -> None:
     print("=" * 70)
     print("  Speech-to-Prompt Pipeline: Preparação e Verificação dos Modelos")
+    print(f"  Backend LLM Ativo: {LLM_BACKEND.upper()}")
     print("=" * 70)
 
     # Fase 0: Limpeza do cache
@@ -253,15 +306,24 @@ def main() -> None:
         print(f"\n[FALHA] Erro ao carregar/verificar Faster-Whisper: {e}")
         sys.exit(1)
 
-    # Fase 2: Ollama
-    try:
-        ollama_ok = verify_ollama_model()
-        if not ollama_ok:
-            print("\n[FALHA] Falha na verificação do Ollama.")
+    # Fase 2: LLM (Embutido, Ollama ou Direto)
+    if LLM_BACKEND == "embedded":
+        try:
+            prepare_embedded_llm()
+        except Exception as e:
+            print(f"\n[FALHA] Erro ao carregar/verificar EmbeddedLLM: {e}")
             sys.exit(1)
-    except Exception as e:
-        print(f"\n[FALHA] Erro ao verificar Ollama: {e}")
-        sys.exit(1)
+    elif LLM_BACKEND == "ollama":
+        try:
+            ollama_ok = verify_ollama_model()
+            if not ollama_ok:
+                print("\n[FALHA] Falha na verificação do Ollama.")
+                sys.exit(1)
+        except Exception as e:
+            print(f"\n[FALHA] Erro ao verificar Ollama: {e}")
+            sys.exit(1)
+    else:
+        print(f"\n[2/3] LLM_BACKEND='{LLM_BACKEND}' ativo (Whisper puro sem LLM). Etapa concluída.")
 
     print("\n" + "=" * 70)
     print("[PASS] Modelos prontos na GPU")

@@ -19,6 +19,10 @@ __pycache__/
 data/samples/*
 !data/samples/.gitkeep
 
+# Modelos locais GGUF
+models/*
+!models/.gitkeep
+
 # IDEs
 .vscode/
 .idea/

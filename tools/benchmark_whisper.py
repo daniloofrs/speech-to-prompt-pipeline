@@ -1,4 +1,4 @@
-"""Benchmark completo de velocidade: Áudio -> Whisper (GPU) -> Ollama (LLM) -> Prompt."""
+"""Benchmark completo de velocidade: Áudio -> Whisper (GPU) -> EmbeddedLLM (GGUF In-Process) -> Prompt."""
 
 import json
 import os
@@ -15,22 +15,23 @@ if _venv_python.exists() and Path(sys.executable).resolve() != _venv_python.reso
     import subprocess
     sys.exit(subprocess.call([str(_venv_python)] + sys.argv))
 
-from faster_whisper import WhisperModel
+# Adiciona raiz ao sys.path
+sys.path.insert(0, str(_project_root))
 
-# Injeta DLLs da NVIDIA no PATH no Windows
-site_packages = Path(sys.prefix) / "Lib" / "site-packages"
-for nvidia_bin in site_packages.glob("nvidia/**/bin"):
-    if nvidia_bin.is_dir():
-        os.environ["PATH"] = str(nvidia_bin) + os.pathsep + os.environ["PATH"]
-        if hasattr(os, "add_dll_directory"):
-            try:
-                os.add_dll_directory(str(nvidia_bin))
-            except OSError:
-                pass
+from faster_whisper import WhisperModel
+from src.config import (
+    EMBEDDED_MODEL_PATH,
+    LLM_BACKEND,
+    LIVE_OLLAMA_MODEL,
+    OLLAMA_HOST,
+    WHISPER_COMPUTE_TYPE,
+    WHISPER_DEVICE,
+    WHISPER_MODEL,
+)
+from src.embedded_llm import EmbeddedLLM
 
 TECH_PROMPT = "Python, Docker, FastAPI, SQL, PostgreSQL, PyTorch, pandas, DataFrame, Ollama, Whisper, API REST"
-OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
-FAST_OLLAMA_MODEL = os.getenv("LIVE_OLLAMA_MODEL", "qwen2.5:3b")
+FAST_OLLAMA_MODEL = os.getenv("LIVE_OLLAMA_MODEL", LIVE_OLLAMA_MODEL)
 
 
 def get_audio_duration(file_path: str) -> float:
@@ -69,29 +70,26 @@ def run_benchmark(audio_path: str):
     print(f"  Arquivo de Áudio   : {audio_path}")
     print(f"  Duração da Fala    : {duration:.2f} segundos")
     print(f"  GPU Dedicada       : NVIDIA GeForce RTX 4050 Laptop (6 GB VRAM)")
-    print(f"  Modelo de Fala     : Faster-Whisper 'medium' (Float16 CUDA)")
-    print(f"  Modelo de LLM      : Ollama '{FAST_OLLAMA_MODEL}' (Q4_K_M na VRAM)")
+    print(f"  Modelo de Fala     : Faster-Whisper '{WHISPER_MODEL}' ({WHISPER_COMPUTE_TYPE} CUDA)")
+    print(f"  Motor de Reescrita : EmbeddedLLM (In-Process GGUF Qwen 2.5 1.5B na GPU)")
     print("-" * 70)
 
     print("Inicializando modelos na VRAM...")
-    model = WhisperModel("medium", device="cuda", compute_type="float16")
+    t0_init = time.perf_counter()
+    model = WhisperModel(WHISPER_MODEL, device=WHISPER_DEVICE, compute_type=WHISPER_COMPUTE_TYPE)
+    embedded_llm = EmbeddedLLM()
+    embedded_llm.load_model()
+    embedded_llm.warmup()
+    init_duration = time.perf_counter() - t0_init
+    print(f"Modelos carregados e aquecidos na GPU em {init_duration:.2f}s!\n")
 
-    # Aquecimento completo da VRAM com o áudio real
-    _warm_segments, _ = model.transcribe(audio_path, language="pt", beam_size=1, without_timestamps=True)
-    list(_warm_segments)
-    try:
-        call_ollama("teste de aquecimento")
-    except Exception:
-        pass
-    print("GPU pronta e aquecida!\n")
-
-    # Medição Whisper (3 passadas estáveis)
+    # Medição Whisper (3 passadas)
     print(">>> 1. Medição do Faster-Whisper (Transcrição de Fala na GPU):")
     whisper_times = []
     transcription = ""
     for i in range(3):
         t0 = time.perf_counter()
-        segments, info = model.transcribe(
+        segments, _ = model.transcribe(
             audio_path,
             language="pt",
             beam_size=1,
@@ -107,42 +105,72 @@ def run_benchmark(audio_path: str):
         print(f"    Passada #{i+1}: {t_w:.3f}s")
 
     avg_whisper = sum(whisper_times) / len(whisper_times)
-    rtf = avg_whisper / duration
-    speed_x = duration / avg_whisper
+    speed_x = duration / avg_whisper if avg_whisper > 0 else 0
 
     print()
     print(f"  Tempo Médio Whisper : {avg_whisper:.3f}s")
-    print(f"  Fator Tempo Real    : {speed_x:.1f}x mais rápido que tempo real (RTF = {rtf:.4f})")
+    print(f"  Fator Tempo Real    : {speed_x:.1f}x mais rápido que tempo real")
     print(f"  Texto Transcrito    : \"{transcription}\"")
     print()
 
-    # Medição Ollama
-    print(">>> 2. Medição do Ollama (Reescrita Estruturada do Prompt):")
-    llm_times = []
+    # Medição EmbeddedLLM
+    print(">>> 2. Medição do EmbeddedLLM (Reescrita In-Process GGUF na GPU):")
+    embedded_times = []
     final_prompt = ""
     for i in range(3):
         t0 = time.perf_counter()
-        final_prompt = call_ollama(transcription)
-        t_llm = time.perf_counter() - t0
-        llm_times.append(t_llm)
-        print(f"    Passada #{i+1}: {t_llm:.3f}s")
+        final_prompt = embedded_llm.rewrite_prompt(transcription)
+        t_emb = time.perf_counter() - t0
+        embedded_times.append(t_emb)
+        print(f"    Passada #{i+1}: {t_emb:.3f}s")
 
-    avg_llm = sum(llm_times) / len(llm_times)
+    avg_embedded = sum(embedded_times) / len(embedded_times)
     print()
-    print(f"  Tempo Médio Ollama  : {avg_llm:.3f}s")
-    print(f"  Prompt Final Refinado: \"{final_prompt}\"")
+    print(f"  Tempo Médio EmbeddedLLM : {avg_embedded:.3f}s")
+    print(f"  Prompt Final Refinado   : \"{final_prompt}\"")
     print()
+
+    # Comparação Opcional com Ollama se estiver respondendo
+    ollama_active = False
+    avg_ollama = None
+    try:
+        req = urllib.request.Request(f"{OLLAMA_HOST.rstrip('/')}/api/tags", method="GET")
+        with urllib.request.urlopen(req, timeout=1.0) as res:
+            if res.status == 200:
+                ollama_active = True
+    except Exception:
+        ollama_active = False
+
+    if ollama_active:
+        print(">>> 3. Comparativo com Servidor Ollama Legado:")
+        try:
+            ollama_times = []
+            for i in range(3):
+                t0 = time.perf_counter()
+                call_ollama(transcription)
+                t_o = time.perf_counter() - t0
+                ollama_times.append(t_o)
+                print(f"    Passada #{i+1} (Ollama): {t_o:.3f}s")
+            avg_ollama = sum(ollama_times) / len(ollama_times)
+            speedup = avg_ollama / avg_embedded if avg_embedded > 0 else 0
+            print(f"  Tempo Médio Ollama : {avg_ollama:.3f}s")
+            print(f"  Ganho de Velocidade: EmbeddedLLM é {speedup:.1f}x MAIS RÁPIDO que o Ollama!")
+            print()
+        except Exception as e:
+            print(f"  Aviso ao testar Ollama: {e}\n")
 
     # Latência Total Ponta a Ponta
-    total_time = avg_whisper + avg_llm
+    total_time = avg_whisper + avg_embedded
     print("=" * 70)
-    print("RESULTADO FINAL: LATÊNCIA PONTA A PONTA (FALA -> CLIPBOARD)")
+    print("RESULTADO FINAL: LATÊNCIA PONTA A PONTA (FALA -> PROMPT REFINADO)")
     print("=" * 70)
     print(f"  Duração da Gravação       : {duration:.2f}s")
     print(f"  Transcrição Whisper       : {avg_whisper:.3f}s  ({(avg_whisper/total_time)*100:.1f}%)")
-    print(f"  Reescrita Ollama          : {avg_llm:.3f}s  ({(avg_llm/total_time)*100:.1f}%)")
+    print(f"  Reescrita EmbeddedLLM     : {avg_embedded:.3f}s  ({(avg_embedded/total_time)*100:.1f}%)")
     print(f"  Tempo Total de Espera     : {total_time:.3f}s")
     print(f"  Taxa de Aceleração Total  : {duration / total_time:.1f}x mais rápido que o áudio falado!")
+    if avg_ollama:
+        print(f"  Tempo Total com Ollama    : {avg_whisper + avg_ollama:.3f}s (Economia: {(avg_whisper + avg_ollama) - total_time:.2f}s!)")
     print("=" * 70)
 
 

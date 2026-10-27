@@ -21,11 +21,20 @@ WHISPER_MODEL = os.getenv("WHISPER_MODEL", "medium")
 WHISPER_DEVICE = os.getenv("WHISPER_DEVICE", "cuda")
 WHISPER_COMPUTE_TYPE = os.getenv("WHISPER_COMPUTE_TYPE", "float16")
 
-# Configuracoes do Ollama (LLM)
+# Configuracoes do Ollama (LLM Legado)
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:7b")
 LIVE_OLLAMA_MODEL = os.getenv("LIVE_OLLAMA_MODEL", "qwen2.5:3b")
 OLLAMA_TEMPERATURE = float(os.getenv("OLLAMA_TEMPERATURE", "0.1"))
+
+# Backend do LLM: 'embedded' (GGUF in-process na GPU), 'direct' (Whisper puro sem LLM) ou 'ollama' (legado HTTP)
+LLM_BACKEND = os.getenv("LLM_BACKEND", "embedded").lower()
+
+# Configuracoes do LLM Embutido (llama-cpp-python + GGUF)
+EMBEDDED_MODEL_PATH = os.getenv("EMBEDDED_MODEL_PATH", str(BASE_DIR / "models" / "qwen2.5-1.5b-instruct-q4_k_m.gguf"))
+EMBEDDED_N_GPU_LAYERS = int(os.getenv("EMBEDDED_N_GPU_LAYERS", "-1"))
+EMBEDDED_N_CTX = int(os.getenv("EMBEDDED_N_CTX", "512"))
+EMBEDDED_MAX_TOKENS = int(os.getenv("EMBEDDED_MAX_TOKENS", "128"))
 
 # Configuracoes de Usabilidade da Pílula Live
 LIVE_HOTKEY = os.getenv("LIVE_HOTKEY", "F8")

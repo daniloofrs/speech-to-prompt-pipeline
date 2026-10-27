@@ -7,3 +7,8 @@ scipy>=1.12.0
 pyperclip>=1.9.0
 nvidia-cublas-cu12; sys_platform == 'win32'
 nvidia-cudnn-cu12; sys_platform == 'win32'
+nvidia-cuda-runtime-cu12; sys_platform == 'win32'
+huggingface-hub>=0.20.0
+# llama-cpp-python pré-compilado com aceleração CUDA:
+# pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124
+llama-cpp-python>=0.3.0
