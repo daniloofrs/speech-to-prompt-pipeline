@@ -29,3 +29,6 @@ models/*
 
 # Superpowers Visual Companion
 .superpowers/
+
+# Hallmark local cache
+.hallmark/

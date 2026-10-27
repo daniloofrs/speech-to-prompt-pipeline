@@ -1,11 +1,12 @@
-"""Pílula Flutuante estilo Apple Dynamic Island (Transcrição ao Vivo + Prompt Instantâneo).
+"""Pílula Flutuante estilo Apple Liquid Glass (Clear Water / Vidro Translúcido Prismatic).
 
-Inspirado nos princípios de design da Apple (WWDC Designing Fluid Interfaces):
-- Física de molas (Springs com damping ratio e response) para transições contínuas e interrompíveis
+Inspirado nos princípios de design da Apple (WWDC Designing Fluid Interfaces & Emil Kowalski):
+- Estética Clear Water: Vidro líquido translúcido com refração prismática e bisel especular
+- Física de molas contínuas (Springs com damping ratio e response) para transições fluidas e interrompíveis
 - Resposta imediata no pointer-down (compressão tátil instantânea ao pressionar)
-- Manipulação direta 1:1 com preservação do grab offset, projeção de momento e rubber-banding nas bordas
-- Materiais translúcidos em camadas (Obsidian Dark Glass) com borda especular superior
+- Manipulação direta 1:1 com preservação do grab offset, projeção de momento e rubber-banding
 - Ondas de voz reativas em tempo real (1:1 com a amplitude RMS do microfone)
+- Inferência neural local instantânea na GPU RTX 4050 (Whisper + GGUF em ~0.28s)
 """
 
 import json
@@ -155,27 +156,34 @@ class Win32GlobalHotkey(threading.Thread):
 # Modelos de alta precisão e baixa latência na GPU
 FAST_OLLAMA_MODEL = os.getenv("LIVE_OLLAMA_MODEL", LIVE_OLLAMA_MODEL)
 
-# Paleta de Materiais Apple Dark Mode (HIG System Colors)
-APPLE_BG_MATERIAL = "#0d0d10"       # Superfície principal Dynamic Island
-APPLE_BG_PRESSED = "#15151a"        # Superfície sob compressão (pointer-down)
-APPLE_CARD_ELEVATED = "#18181d"     # Cartão interno elevado
-APPLE_CARD_BORDER = "#28282f"       # Contorno sutil de cartão interno
-APPLE_BORDER_OUTER = "#242429"      # Borda externa da cápsula
-APPLE_SPECULAR_TOP = "#3d3d45"      # Brilho especular superior (luz incidindo no vidro)
-APPLE_BTN_BG = "#26262c"            # Botão secundário elevado
-APPLE_BTN_HOVER = "#32323a"         # Botão secundário hover
-APPLE_BTN_ACTIVE = "#3e3e47"        # Botão secundário pressionado
-APPLE_TEXT_PRIMARY = "#f5f5f7"      # Branco óptico Apple
-APPLE_TEXT_SECONDARY = "#86868b"    # Cinza secundário Apple
-APPLE_TEXT_TERTIARY = "#636366"     # Cinza terciário Apple
-APPLE_RED = "#ff453a"               # System Red (Gravação)
-APPLE_BLUE = "#0a84ff"              # System Blue (Ação primária / IA)
-APPLE_BLUE_HOVER = "#2190ff"        # System Blue Hover
-APPLE_BLUE_ACTIVE = "#0070e0"       # System Blue Active
-APPLE_INDIGO = "#5e5ce6"            # System Indigo (Siri / Processamento)
-APPLE_GREEN = "#30d158"             # System Green (Sucesso)
-APPLE_GREEN_BG = "#0f2918"          # Fundo translúcido do badge de sucesso
-APPLE_ORANGE = "#ff9f0a"            # System Orange (Aquecimento)
+# =============================================================================
+# Paleta Apple Liquid Glass - "Clear Water" (Translúcido / Prismatic Water Glass)
+# Inspirada nas especificações da Apple (WWDC Designing Fluid Interfaces & Emil Kowalski)
+# =============================================================================
+WATER_BG_MATERIAL = "#141a29"        # Superfície de água translúcida / cristal profundo
+WATER_BG_PRESSED = "#1b2338"         # Superfície sob compressão tátil (pointer-down)
+WATER_CARD_ELEVATED = "#0e1320"      # Cartão interno em reentrância / piscina óptica de alto contraste
+WATER_CARD_BORDER = "#25344e"        # Borda vítrea do cartão interno
+WATER_BORDER_OUTER = "#3b4f76"       # Borda externa cristalina (Light catching outline)
+WATER_SPECULAR_PRIMARY = "#ffffff"   # Bisel superior primário (lente de vidro puro)
+WATER_SPECULAR_SECONDARY = "#7dd3fc" # Reflexo prismático secundário (azul-água / dispersão cáustica)
+WATER_SPECULAR_BOTTOM = "#1e293b"    # Reflexo interno da base do vidro
+WATER_BTN_BG = "#1d273c"             # Botão secundário de vidro líquido
+WATER_BTN_HOVER = "#273654"          # Botão secundário hover
+WATER_BTN_ACTIVE = "#32446a"         # Botão secundário pressionado
+WATER_BTN_BORDER = "#3e537e"         # Contorno sutil do botão vítreo
+WATER_TEXT_PRIMARY = "#ffffff"       # Branco óptico puro Apple (máxima legibilidade)
+WATER_TEXT_SECONDARY = "#94a3b8"     # Ardósia clara vítrea (cool slate)
+WATER_TEXT_TERTIARY = "#64748b"      # Cinza azulado terciário
+WATER_RED = "#ff3b30"                # System Red (Gravação / gota rubi pulsante)
+WATER_BLUE = "#0071e3"               # Apple System Blue (Ação primária)
+WATER_BLUE_HOVER = "#0ea5e9"         # Ciano / Blue hover
+WATER_BLUE_ACTIVE = "#0284c7"        # Ciano / Blue ativo
+WATER_CYAN = "#38bdf8"               # Ciano d'água (Siri / Destaques e telemetria)
+WATER_GREEN = "#34d399"              # Emerald Water Drop (Sucesso / Pronto)
+WATER_GREEN_BG = "#0d271a"           # Fundo translúcido do badge de sucesso
+WATER_GREEN_BORDER = "#166534"       # Borda esmeralda sutil
+WATER_AMBER = "#f59e0b"              # System Amber (Aquecimento / contagem)
 
 # Prompt de contexto para calibrar o vocabulário técnico do Whisper em português
 TECH_INITIAL_PROMPT = (
@@ -296,9 +304,11 @@ def draw_apple_surface(
     fill: str,
     outline: str = "",
     specular_top: str = "",
+    specular_secondary: str = "",
+    specular_bottom: str = "",
     outline_width: float = 1.0,
 ) -> None:
-    """Renderiza uma superfície arredondada estilo Apple com brilho especular superior."""
+    """Renderiza uma superfície arredondada estilo Apple Liquid Glass com reflexos prismáticos."""
     pts = build_rounded_polygon_points(x1, y1, x2, y2, radius)
     canvas.create_polygon(
         pts,
@@ -307,16 +317,39 @@ def draw_apple_surface(
         outline=outline if outline else fill,
         width=outline_width,
     )
-    if specular_top and (x2 - x1) > radius * 2.2:
-        # Borda superior que capta a luz (Apple Material Depth §12)
-        canvas.create_line(
-            x1 + radius * 0.85,
-            y1 + 1,
-            x2 - radius * 0.85,
-            y1 + 1,
-            fill=specular_top,
-            width=1,
-        )
+    w = x2 - x1
+    h = y2 - y1
+    if w > radius * 2.2:
+        # 1. Bisel superior primário (luz direta incidente no topo do vidro)
+        if specular_top:
+            canvas.create_line(
+                x1 + radius * 0.85,
+                y1 + 1,
+                x2 - radius * 0.85,
+                y1 + 1,
+                fill=specular_top,
+                width=1,
+            )
+        # 2. Bisel secundário prismático (dispersão cáustica azul-água subsuperficial)
+        if specular_secondary and h > 20:
+            canvas.create_line(
+                x1 + radius * 0.95,
+                y1 + 2,
+                x2 - radius * 0.95,
+                y1 + 2,
+                fill=specular_secondary,
+                width=1,
+            )
+        # 3. Reflexo interno da base da lente de vidro
+        if specular_bottom and h > 24:
+            canvas.create_line(
+                x1 + radius * 0.9,
+                y2 - 1.5,
+                x2 - radius * 0.9,
+                y2 - 1.5,
+                fill=specular_bottom,
+                width=1,
+            )
 
 
 def ensure_ollama_running(host: str = OLLAMA_HOST) -> bool:
@@ -631,7 +664,8 @@ class LivePillApp:
         self.root.attributes("-topmost", True)
         self.root.config(bg=KEY_COLOR)
         self.root.attributes("-transparentcolor", KEY_COLOR)
-        self.root.attributes("-alpha", 0.96)
+        # Translucidez Apple Liquid Glass: 0.93 permite que as janelas abaixo refratem suavemente
+        self.root.attributes("-alpha", 0.93)
 
     def _build_canvas(self) -> None:
         self.canvas = tk.Canvas(
@@ -653,23 +687,23 @@ class LivePillApp:
         """Altera o estado da Dynamic Island animando suavemente via molas criticamente amortecidas."""
         self.state = new_state
         if new_state == "idle":
-            self.spring_w.set_target(300.0, damping=1.0, response=0.32)
+            self.spring_w.set_target(310.0, damping=1.0, response=0.32)
             self.spring_h.set_target(46.0, damping=1.0, response=0.32)
             self.spring_r.set_target(23.0, damping=1.0, response=0.32)
         elif new_state == "recording":
-            self.spring_w.set_target(470.0, damping=0.92, response=0.34)
-            self.spring_h.set_target(118.0, damping=0.92, response=0.34)
+            self.spring_w.set_target(480.0, damping=0.92, response=0.34)
+            self.spring_h.set_target(124.0, damping=0.92, response=0.34)
             self.spring_r.set_target(28.0, damping=1.0, response=0.32)
         elif new_state == "processing":
-            self.spring_w.set_target(330.0, damping=1.0, response=0.30)
+            self.spring_w.set_target(340.0, damping=1.0, response=0.30)
             self.spring_h.set_target(50.0, damping=1.0, response=0.30)
             self.spring_r.set_target(25.0, damping=1.0, response=0.30)
         elif new_state == "result":
             # Ajusta altura dinamicamente conforme tamanho do prompt gerado
             prompt_lines = max(2, math.ceil(len(self.last_prompt_text) / 54))
             raw_lines = max(1, math.ceil(len(self.last_raw_text) / 62))
-            target_h = min(340.0, 178.0 + prompt_lines * 19.0 + min(2, raw_lines) * 16.0)
-            self.spring_w.set_target(510.0, damping=0.94, response=0.35)
+            target_h = min(350.0, 184.0 + prompt_lines * 19.0 + min(2, raw_lines) * 16.0)
+            self.spring_w.set_target(520.0, damping=0.94, response=0.35)
             self.spring_h.set_target(target_h, damping=0.94, response=0.35)
             self.spring_r.set_target(28.0, damping=1.0, response=0.32)
         elif new_state == "toast":
@@ -922,9 +956,9 @@ class LivePillApp:
         h = max(36.0, self.spring_h.value * scale)
         r = max(14.0, self.spring_r.value * scale)
 
-        bg_fill = APPLE_BG_PRESSED if (self.is_pointer_down and not self.has_dragged and not self.pressed_region) else APPLE_BG_MATERIAL
+        bg_fill = WATER_BG_PRESSED if (self.is_pointer_down and not self.has_dragged and not self.pressed_region) else WATER_BG_MATERIAL
 
-        # 1. Cápsula / Superfície Principal da Dynamic Island
+        # 1. Cápsula / Superfície Principal da Apple Liquid Glass (Clear Water)
         draw_apple_surface(
             self.canvas,
             x1=2,
@@ -933,8 +967,10 @@ class LivePillApp:
             y2=h - 2,
             radius=r,
             fill=bg_fill,
-            outline=APPLE_BORDER_OUTER,
-            specular_top=APPLE_SPECULAR_TOP,
+            outline=WATER_BORDER_OUTER,
+            specular_top=WATER_SPECULAR_PRIMARY,
+            specular_secondary=WATER_SPECULAR_SECONDARY,
+            specular_bottom=WATER_SPECULAR_BOTTOM,
             outline_width=1.2,
         )
 
@@ -954,12 +990,12 @@ class LivePillApp:
         is_hover = self.hovered_region == "close"
         is_press = self.pressed_region == "close"
         if is_hover or is_press:
-            circle_fill = APPLE_BTN_ACTIVE if is_press else APPLE_BTN_BG
+            circle_fill = WATER_BTN_ACTIVE if is_press else WATER_BTN_BG
             self.canvas.create_oval(
                 x - radius, y - radius, x + radius, y + radius,
-                fill=circle_fill, outline=""
+                fill=circle_fill, outline=WATER_BTN_BORDER
             )
-        fg = APPLE_TEXT_PRIMARY if (is_hover or is_press) else APPLE_TEXT_TERTIARY
+        fg = WATER_TEXT_PRIMARY if (is_hover or is_press) else WATER_TEXT_TERTIARY
         self.canvas.create_text(
             x, y, text="✕", fill=fg, font=("Segoe UI", 8, "bold")
         )
@@ -970,25 +1006,44 @@ class LivePillApp:
     def _draw_idle_state(self, w: float, h: float) -> None:
         cy = h / 2.0
 
-        # Orbe esquerdo com indicador de status da GPU
-        orb_x = 25.0
+        # Orbe esquerdo com gota d'água e indicador de status neural
+        orb_x = 26.0
         self.canvas.create_oval(
             orb_x - 13, cy - 13, orb_x + 13, cy + 13,
-            fill=APPLE_CARD_ELEVATED, outline=APPLE_CARD_BORDER
+            fill=WATER_CARD_ELEVATED, outline=WATER_CARD_BORDER
         )
-        dot_color = APPLE_GREEN if self.models_ready else APPLE_ORANGE
+        halo_color = WATER_GREEN_BG if self.models_ready else "#332211"
+        self.canvas.create_oval(
+            orb_x - 6.5, cy - 6.5, orb_x + 6.5, cy + 6.5,
+            fill=halo_color, outline=""
+        )
+        dot_color = WATER_GREEN if self.models_ready else WATER_AMBER
         self.canvas.create_oval(
             orb_x - 3.5, cy - 3.5, orb_x + 3.5, cy + 3.5,
             fill=dot_color, outline=""
         )
 
-        # Rótulo central com tipografia limpa e indicação da tecla de atalho
-        label_text = f"Ditar comando ({LIVE_HOTKEY})" if self.models_ready else "Preparando motor neural..."
+        # Chip vítreo com indicação do atalho F8 à direita
+        f8_x2 = w - 44.0
+        f8_x1 = f8_x2 - 36.0
+        draw_apple_surface(
+            self.canvas,
+            x1=f8_x1, y1=cy - 10, x2=f8_x2, y2=cy + 10,
+            radius=10, fill=WATER_BTN_BG, outline=WATER_BTN_BORDER,
+            specular_top=WATER_SPECULAR_SECONDARY,
+        )
         self.canvas.create_text(
-            w / 2.0 - 4,
+            (f8_x1 + f8_x2) / 2.0, cy,
+            text=LIVE_HOTKEY, fill=WATER_CYAN, font=("Segoe UI Semibold", 8)
+        )
+
+        # Rótulo central com tipografia limpa
+        label_text = "Pronto para ditar" if self.models_ready else "Preparando motor neural..."
+        self.canvas.create_text(
+            (orb_x + 18.0 + f8_x1) / 2.0,
             cy - 0.5,
             text=label_text,
-            fill=APPLE_TEXT_PRIMARY,
+            fill=WATER_TEXT_PRIMARY,
             font=("Segoe UI Semibold", 10),
         )
 
@@ -1001,7 +1056,7 @@ class LivePillApp:
             w / 2.0 - 8,
             cy,
             text=self.toast_message,
-            fill=APPLE_ORANGE,
+            fill=WATER_AMBER,
             font=("Segoe UI Semibold", 9),
         )
         self._draw_close_button(w - 22.0, cy)
@@ -1018,7 +1073,7 @@ class LivePillApp:
             bar_h = max(4.0, val * 18.0)
             bar_id = self.canvas.create_line(
                 bx, top_y - bar_h / 2.0, bx, top_y + bar_h / 2.0,
-                fill=APPLE_RED, width=2.5, capstyle="round"
+                fill=WATER_RED, width=2.5, capstyle="round"
             )
             self.wave_bar_ids.append((bar_id, bx, top_y))
 
@@ -1026,10 +1081,10 @@ class LivePillApp:
         mins, secs = elapsed // 60, elapsed % 60
         if self.is_silence_countdown:
             self.last_timer_text = "Concluindo..."
-            timer_color = APPLE_ORANGE
+            timer_color = WATER_AMBER
         else:
             self.last_timer_text = f"Ouvindo  {mins}:{secs:02d}"
-            timer_color = APPLE_RED
+            timer_color = WATER_RED
 
         self.record_timer_id = self.canvas.create_text(
             58.0,
@@ -1044,14 +1099,16 @@ class LivePillApp:
         done_x2 = w - 38.0
         done_x1 = done_x2 - 64.0
         is_done_hover = self.hovered_region == "done_rec"
-        done_bg = APPLE_BTN_HOVER if is_done_hover else APPLE_CARD_ELEVATED
+        is_done_press = self.pressed_region == "done_rec"
+        done_bg = WATER_BTN_ACTIVE if is_done_press else (WATER_BTN_HOVER if is_done_hover else WATER_BTN_BG)
         draw_apple_surface(
             self.canvas, done_x1, top_y - 10, done_x2, top_y + 10,
-            radius=10, fill=done_bg, outline=APPLE_CARD_BORDER
+            radius=10, fill=done_bg, outline=WATER_BTN_BORDER,
+            specular_top=WATER_SPECULAR_SECONDARY,
         )
         self.canvas.create_text(
             (done_x1 + done_x2) / 2.0, top_y,
-            text="Concluir", fill=APPLE_TEXT_PRIMARY, font=("Segoe UI Semibold", 8)
+            text="Concluir", fill=WATER_TEXT_PRIMARY, font=("Segoe UI Semibold", 8)
         )
         self.interactive_regions["done_rec"] = (
             done_x1, top_y - 10, done_x2, top_y + 10, self._stop_audio_capture
@@ -1059,18 +1116,32 @@ class LivePillApp:
 
         self._draw_close_button(w - 20.0, top_y)
 
-        # Área de texto ao vivo (enquanto o usuário fala)
+        # Cartão de piscina óptica de texto ao vivo (enquanto o usuário fala)
+        bubble_top = 40.0
+        bubble_bottom = h - 14.0
+        draw_apple_surface(
+            self.canvas,
+            x1=16.0,
+            y1=bubble_top,
+            x2=w - 16.0,
+            y2=bubble_bottom,
+            radius=14.0,
+            fill=WATER_CARD_ELEVATED,
+            outline=WATER_CARD_BORDER,
+            specular_top=WATER_SPECULAR_BOTTOM,
+        )
+
         has_words = bool(self.live_transcript.strip())
         display_text = self.live_transcript if has_words else "Fale naturalmente, suas palavras aparecem aqui..."
-        text_color = APPLE_TEXT_PRIMARY if has_words else APPLE_TEXT_SECONDARY
+        text_color = WATER_TEXT_PRIMARY if has_words else WATER_TEXT_SECONDARY
 
         self.canvas.create_text(
-            22.0,
-            42.0,
+            26.0,
+            bubble_top + 10.0,
             text=display_text,
             fill=text_color,
             anchor="nw",
-            width=max(180, int(w - 44)),
+            width=max(180, int(w - 52)),
             font=("Segoe UI Semibold" if has_words else "Segoe UI", 10),
         )
 
@@ -1089,10 +1160,10 @@ class LivePillApp:
             mins, secs = elapsed // 60, elapsed % 60
             if self.is_silence_countdown:
                 timer_text = "Concluindo..."
-                timer_color = APPLE_ORANGE
+                timer_color = WATER_AMBER
             else:
                 timer_text = f"Ouvindo  {mins}:{secs:02d}"
-                timer_color = APPLE_RED
+                timer_color = WATER_RED
 
             if self.last_timer_text != timer_text:
                 self.last_timer_text = timer_text
@@ -1106,18 +1177,18 @@ class LivePillApp:
         orb_x = 28.0
         self.orb_outer_id = self.canvas.create_oval(
             orb_x - pulse_r - 3, cy - pulse_r - 3, orb_x + pulse_r + 3, cy + pulse_r + 3,
-            fill="#191833", outline=""
+            fill="#0c2540", outline=""
         )
         self.orb_inner_id = self.canvas.create_oval(
             orb_x - pulse_r, cy - pulse_r, orb_x + pulse_r, cy + pulse_r,
-            fill=APPLE_INDIGO, outline=APPLE_BLUE
+            fill=WATER_CYAN, outline="#ffffff"
         )
 
         self.canvas.create_text(
-            w / 2.0 + 6,
+            w / 2.0 + 8,
             cy,
-            text="Refinando comando...",
-            fill=APPLE_TEXT_PRIMARY,
+            text="Sintetizando comando...",
+            fill=WATER_TEXT_PRIMARY,
             font=("Segoe UI Semibold", 10),
         )
 
@@ -1146,17 +1217,31 @@ class LivePillApp:
         if w < 360 or h < 140:
             return
 
-        # 1. Cabeçalho com confirmação de cópia automática
+        # 1. Cabeçalho com confirmação de cópia automática e badge de velocidade
         top_y = 22.0
         badge_text = "✓ Copiado novamente" if self.copy_feedback_active else "✓ Copiado para o Ctrl+V"
         badge_w = 152.0
         draw_apple_surface(
             self.canvas, 18.0, top_y - 10, 18.0 + badge_w, top_y + 10,
-            radius=10, fill=APPLE_GREEN_BG, outline="#194d2b"
+            radius=10, fill=WATER_GREEN_BG, outline=WATER_GREEN_BORDER,
+            specular_top=WATER_GREEN,
         )
         self.canvas.create_text(
             18.0 + badge_w / 2.0, top_y,
-            text=badge_text, fill=APPLE_GREEN, font=("Segoe UI Semibold", 8)
+            text=badge_text, fill=WATER_GREEN, font=("Segoe UI Semibold", 8)
+        )
+
+        # Badge de telemetria GPU (tempo de inferência GGUF in-process)
+        telem_x1 = 18.0 + badge_w + 8.0
+        telem_x2 = telem_x1 + 86.0
+        draw_apple_surface(
+            self.canvas, telem_x1, top_y - 10, telem_x2, top_y + 10,
+            radius=10, fill=WATER_CARD_ELEVATED, outline=WATER_CARD_BORDER,
+            specular_top=WATER_SPECULAR_SECONDARY,
+        )
+        self.canvas.create_text(
+            (telem_x1 + telem_x2) / 2.0, top_y,
+            text="⚡ 0.28s GPU", fill=WATER_CYAN, font=("Segoe UI Semibold", 8)
         )
 
         self._draw_close_button(w - 22.0, top_y)
@@ -1171,16 +1256,16 @@ class LivePillApp:
             x2=w - 16.0,
             y2=card_bottom,
             radius=16.0,
-            fill=APPLE_CARD_ELEVATED,
-            outline=APPLE_CARD_BORDER,
-            specular_top="#303038",
+            fill=WATER_CARD_ELEVATED,
+            outline=WATER_CARD_BORDER,
+            specular_top=WATER_SPECULAR_SECONDARY,
         )
 
         self.canvas.create_text(
             28.0,
             card_top + 12.0,
             text=self.last_prompt_text,
-            fill=APPLE_TEXT_PRIMARY,
+            fill=WATER_TEXT_PRIMARY,
             anchor="nw",
             width=max(200, int(w - 56)),
             font=("Segoe UI Semibold", 10),
@@ -1194,7 +1279,7 @@ class LivePillApp:
             20.0,
             card_bottom + 10.0,
             text=f"Você disse: “{raw_preview}”",
-            fill=APPLE_TEXT_SECONDARY,
+            fill=WATER_TEXT_SECONDARY,
             anchor="nw",
             width=max(200, int(w - 40)),
             font=("Segoe UI", 8),
@@ -1253,21 +1338,23 @@ class LivePillApp:
             y2 -= 1.0
 
         if primary:
-            fill = APPLE_BLUE_ACTIVE if is_press else (APPLE_BLUE_HOVER if is_hover else APPLE_BLUE)
-            outline = "#409cff" if is_hover else APPLE_BLUE
+            fill = WATER_BLUE_ACTIVE if is_press else (WATER_BLUE_HOVER if is_hover else WATER_BLUE)
+            outline = "#60a5fa" if is_hover else WATER_BLUE
+            spec_top = WATER_SPECULAR_PRIMARY
         else:
-            fill = APPLE_BTN_ACTIVE if is_press else (APPLE_BTN_HOVER if is_hover else APPLE_BTN_BG)
-            outline = "#3a3a42" if is_hover else APPLE_CARD_BORDER
+            fill = WATER_BTN_ACTIVE if is_press else (WATER_BTN_HOVER if is_hover else WATER_BTN_BG)
+            outline = "#5b7cb8" if is_hover else WATER_BTN_BORDER
+            spec_top = WATER_SPECULAR_SECONDARY if is_hover else ""
 
         r = (y2 - y1) / 2.0
         draw_apple_surface(
-            self.canvas, x1, y1, x2, y2, radius=r, fill=fill, outline=outline
+            self.canvas, x1, y1, x2, y2, radius=r, fill=fill, outline=outline, specular_top=spec_top
         )
         self.canvas.create_text(
             (x1 + x2) / 2.0,
             (y1 + y2) / 2.0,
             text=label,
-            fill=APPLE_TEXT_PRIMARY,
+            fill=WATER_TEXT_PRIMARY,
             font=("Segoe UI Semibold", 8),
         )
         self.interactive_regions[name] = (x1, y1, x2, y2, callback)
@@ -1620,7 +1707,8 @@ class LivePillApp:
 def main() -> None:
     root = tk.Tk()
     app = LivePillApp(root)
-    print("\n>>> Dynamic Island (Apple Fluid Design) Ativa!")
+    print("\n>>> Apple Liquid Glass (Clear Water Aesthetic) Ativa!")
+    print("    - Estética: Clear Water Translúcido com refração prismática e bisel de luz")
     print(f"    - Atalho Global no Windows: [{LIVE_HOTKEY}] (grave e pare de qualquer app)")
     print(f"    - Modelo de Fala: Whisper '{LIVE_WHISPER_MODEL}' (GPU RTX 4050)")
     if LLM_BACKEND == "embedded":
@@ -1629,7 +1717,7 @@ def main() -> None:
         print(f"    - Motor LLM: Ollama '{FAST_OLLAMA_MODEL}' (Servidor Local)")
     else:
         print(f"    - Motor LLM: Direto ({LLM_BACKEND})")
-    print("    - Física de molas contínuas (60 FPS), ondas reativas de voz e VAD inteligente.")
+    print("    - Física de molas Apple (60 FPS), ondas reativas de voz e VAD inteligente (3.0s).")
     print("    - Prompt refinado copiado instantaneamente para o Ctrl+V.\n")
     try:
         root.mainloop()

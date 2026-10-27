@@ -1,0 +1,904 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Speech-to-Prompt • Apple Design & Liquid Glass Studio</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: #07080b;
+      color: #f5f5f7;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Inter", -apple-system, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow-x: hidden;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* Top Navigation (Apple HIG Translucent Chrome) */
+    header {
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(15, 17, 24, 0.75);
+      backdrop-filter: blur(24px) saturate(180%);
+      -webkit-backdrop-filter: blur(24px) saturate(180%);
+      padding: 14px 28px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: sticky;
+      top: 0;
+      z-index: 50;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .apple-icon {
+      width: 17px;
+      height: 17px;
+      fill: #ffffff;
+    }
+
+    .brand-title {
+      font-size: 15px;
+      font-weight: 600;
+      color: #ffffff;
+      letter-spacing: -0.015em;
+    }
+
+    .badge-apple {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      padding: 3px 9px;
+      border-radius: 9999px;
+      background: rgba(255, 255, 255, 0.1);
+      color: #e2e8f0;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+    }
+
+    /* Apple Segmented Controls Bar */
+    .controls-strip {
+      background: rgba(18, 20, 28, 0.85);
+      backdrop-filter: blur(20px);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      padding: 12px 28px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 16px;
+    }
+
+    .segmented-control {
+      display: flex;
+      align-items: center;
+      gap: 2px;
+      background: rgba(0, 0, 0, 0.35);
+      padding: 3px;
+      border-radius: 9999px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .segment-label {
+      font-size: 11px;
+      text-transform: uppercase;
+      font-weight: 600;
+      color: #71717a;
+      margin-right: 4px;
+      padding-left: 10px;
+      letter-spacing: 0.04em;
+    }
+
+    .segment-btn {
+      background: transparent;
+      border: none;
+      color: #a1a1aa;
+      font-size: 13px;
+      font-weight: 500;
+      padding: 5px 14px;
+      border-radius: 9999px;
+      cursor: pointer;
+      transition: all 0.15s ease-out;
+    }
+
+    .segment-btn:active {
+      transform: scale(0.96);
+    }
+
+    .segment-btn.active {
+      background: rgba(255, 255, 255, 0.18);
+      color: #ffffff;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.3), inset 0 1px 1px rgba(255,255,255,0.3);
+      font-weight: 600;
+    }
+
+    .action-apple-primary {
+      background: #0071e3;
+      color: #ffffff;
+      border: none;
+      font-size: 13px;
+      font-weight: 600;
+      padding: 7px 18px;
+      border-radius: 9999px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      box-shadow: 0 4px 12px rgba(0, 113, 227, 0.35), inset 0 1px 1px rgba(255,255,255,0.4);
+      transition: transform 0.1s ease, filter 0.15s ease;
+    }
+
+    .action-apple-primary:hover {
+      filter: brightness(1.08);
+      transform: scale(1.02);
+    }
+
+    .action-apple-primary:active {
+      transform: scale(0.96);
+    }
+
+    main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      padding: 28px;
+      max-width: 1400px;
+      margin: 0 auto;
+      width: 100%;
+      gap: 28px;
+    }
+
+    /* Screen Simulator Container */
+    .viewport-container {
+      background: #000000;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 18px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 32px 70px -15px rgba(0,0,0,0.9);
+    }
+
+    .viewport-header {
+      background: rgba(20, 22, 30, 0.9);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      padding: 12px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .window-dots {
+      display: flex;
+      gap: 7px;
+    }
+
+    .dot {
+      width: 11px;
+      height: 11px;
+      border-radius: 50%;
+    }
+    .dot-red { background: #ff5f56; }
+    .dot-yellow { background: #ffbd2e; }
+    .dot-green { background: #27c93f; }
+
+    /* The Stage with Vibrant Ambient Wallpaper */
+    .desktop-stage {
+      height: 560px;
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 40px;
+      overflow: hidden;
+      user-select: none;
+      background: 
+        radial-gradient(circle at 18% 28%, rgba(244, 63, 94, 0.3) 0%, transparent 45%),
+        radial-gradient(circle at 82% 72%, rgba(59, 130, 246, 0.32) 0%, transparent 45%),
+        radial-gradient(circle at 50% 50%, rgba(147, 51, 234, 0.22) 0%, transparent 60%),
+        linear-gradient(135deg, #07080f 0%, #101222 50%, #0a0b14 100%);
+    }
+
+    /* Realistic IDE / App Behind the Glass to Showcase Live Refraction */
+    .ide-behind {
+      position: absolute;
+      width: 84%;
+      height: 80%;
+      background: rgba(15, 17, 26, 0.72);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 14px;
+      padding: 26px;
+      font-family: 'Atkinson Hyperlegible Mono', monospace;
+      font-size: 13px;
+      color: #94a3b8;
+      line-height: 1.85;
+      box-shadow: 0 24px 48px rgba(0, 0, 0, 0.5);
+      pointer-events: none;
+    }
+
+    .syntax-kw { color: #c084fc; font-weight: 600; }
+    .syntax-fn { color: #60a5fa; }
+    .syntax-str { color: #f472b6; }
+    .syntax-num { color: #fbbf24; }
+    .syntax-comm { color: #64748b; font-style: italic; }
+
+    /* ==========================================================================
+       APPLE LIQUID GLASS MATERIALS (From Apple Design Skill & WWDC Spec)
+       ========================================================================== */
+
+    /* Material 1: Apple Dynamic Island (Obsidian Glass) */
+    .material-obsidian {
+      background: rgba(12, 13, 18, 0.76);
+      backdrop-filter: blur(34px) saturate(220%) contrast(1.15);
+      -webkit-backdrop-filter: blur(34px) saturate(220%) contrast(1.15);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      box-shadow: 
+        0 24px 60px -15px rgba(0, 0, 0, 0.95),
+        0 0 0 1px rgba(255, 255, 255, 0.06),
+        inset 0 1.2px 1.5px 0 rgba(255, 255, 255, 0.6), /* Specular Beveled Rim */
+        inset 0 -1px 1px 0 rgba(255, 255, 255, 0.08);  /* Sub-surface Rim */
+      color: #ffffff;
+    }
+
+    /* Material 2: Liquid Water (Translucent Prismatic Glass) */
+    .material-water {
+      background: rgba(255, 255, 255, 0.14);
+      backdrop-filter: blur(28px) saturate(200%) brightness(1.12);
+      -webkit-backdrop-filter: blur(28px) saturate(200%) brightness(1.12);
+      border: 1px solid rgba(255, 255, 255, 0.38);
+      box-shadow: 
+        0 30px 70px -15px rgba(0, 0, 0, 0.7),
+        0 0 0 1px rgba(255, 255, 255, 0.22),
+        inset 0 1.6px 2px 0 rgba(255, 255, 255, 0.85),
+        inset 0 -1.6px 2px 0 rgba(255, 255, 255, 0.2);
+      color: #ffffff;
+    }
+
+    /* Material 3: VisionOS Spatial Glass (Volumetric Dark Frost) */
+    .material-spatial {
+      background: rgba(24, 26, 38, 0.65);
+      backdrop-filter: blur(40px) saturate(240%);
+      -webkit-backdrop-filter: blur(40px) saturate(240%);
+      border: 1px solid rgba(255, 255, 255, 0.22);
+      box-shadow: 
+        0 30px 80px -12px rgba(0, 0, 0, 0.9),
+        0 0 0 1px rgba(255, 255, 255, 0.1),
+        inset 0 1px 2px 0 rgba(255, 255, 255, 0.7),
+        inset 0 -1px 1px 0 rgba(255, 255, 255, 0.12);
+      color: #ffffff;
+    }
+
+    /* THE DYNAMIC ISLAND ELEMENT */
+    .apple-island {
+      position: absolute;
+      z-index: 30;
+      border-radius: 9999px;
+      cursor: grab;
+      user-select: none;
+      touch-action: none;
+      /* Physics values managed continuously via JS requestAnimationFrame spring loop */
+    }
+
+    .apple-island:active {
+      cursor: grabbing;
+    }
+
+    /* Apple Waveform Sound Bars */
+    .wave-container {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 3.5px;
+      height: 38px;
+    }
+
+    .wave-bar {
+      width: 3px;
+      border-radius: 9999px;
+      background: #ffffff;
+      transition: height 0.08s ease;
+    }
+
+    /* Glow Dots */
+    .glow-dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: #34c759; /* Apple System Green */
+      box-shadow: 0 0 12px #34c759;
+    }
+
+    .glow-dot.recording {
+      background: #ff3b30; /* Apple System Red */
+      box-shadow: 0 0 14px #ff3b30;
+      animation: pulse-recording 1.2s infinite ease-in-out;
+    }
+
+    @keyframes pulse-recording {
+      0%, 100% { transform: scale(1); opacity: 1; }
+      50% { transform: scale(0.85); opacity: 0.75; }
+    }
+
+    /* Cards Grid */
+    .cards-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+      gap: 24px;
+    }
+
+    .glass-card {
+      background: rgba(18, 20, 30, 0.65);
+      backdrop-filter: blur(20px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 18px;
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      box-shadow: 0 12px 30px rgba(0,0,0,0.4);
+    }
+
+    .glass-card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .glass-card-title {
+      font-size: 17px;
+      font-weight: 600;
+      color: #ffffff;
+    }
+
+    .glass-card-badge {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 3px 9px;
+      border-radius: 9999px;
+      background: rgba(255, 255, 255, 0.08);
+      color: #94a3b8;
+    }
+
+    .glass-card-desc {
+      font-size: 13px;
+      line-height: 1.6;
+      color: #94a3b8;
+    }
+
+    .apple-btn-secondary {
+      background: rgba(255, 255, 255, 0.12);
+      color: #ffffff;
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      padding: 7px 16px;
+      border-radius: 9999px;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      align-self: flex-start;
+    }
+
+    .apple-btn-secondary:active {
+      transform: scale(0.96);
+    }
+
+    .apple-btn-secondary:hover {
+      background: rgba(255, 255, 255, 0.22);
+    }
+
+    .toast-apple {
+      position: fixed;
+      bottom: 28px;
+      right: 28px;
+      background: rgba(255, 255, 255, 0.96);
+      color: #000000;
+      font-size: 13px;
+      font-weight: 600;
+      padding: 12px 22px;
+      border-radius: 9999px;
+      box-shadow: 0 16px 40px rgba(0,0,0,0.6);
+      display: none;
+      z-index: 100;
+      animation: pop-toast 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    }
+
+    @keyframes pop-toast {
+      0% { transform: translateY(20px) scale(0.9); opacity: 0; }
+      100% { transform: translateY(0) scale(1); opacity: 1; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Top Navigation -->
+  <header>
+    <div class="brand">
+      <svg class="apple-icon" viewBox="0 0 170 170"><path d="M150.37 130.25c-2.45 5.66-5.35 10.87-8.71 15.66-4.58 6.53-8.33 11.05-11.22 13.56-4.48 4.12-9.28 6.23-14.42 6.35-3.69 0-8.14-1.05-13.32-3.18-5.19-2.12-9.97-3.17-14.34-3.17-4.58 0-9.49 1.05-14.75 3.17-5.26 2.13-9.5 3.24-12.74 3.35-4.35.13-9.16-1.9-14.42-6.08-3.7-3.04-7.68-7.81-11.94-14.3-5.26-8.08-9.48-17.1-12.66-27.06-3.18-9.96-4.77-19.46-4.77-28.51 0-11.83 2.92-21.73 8.76-29.7 5.84-7.97 13.27-12.08 22.3-12.33 4.45-.13 9.4 1.15 14.85 3.84 5.45 2.69 9.17 4.09 11.16 4.19 1.58-.1 5.37-1.5 11.38-4.19 6.01-2.69 11.16-3.88 15.45-3.58 11.85.8 21.05 5.09 27.6 12.87-10.5 6.4-15.65 15.22-15.45 26.46.2 8.75 3.53 16.08 9.98 22 6.45 5.92 14.2 9.25 23.25 10 0 0-3.32 10.36-9.9 22.46zM119.22 31.84c0-7.39 2.65-14.37 7.95-20.94 5.3-6.57 11.75-10.6 19.35-12.1-1.06 7.6-3.9 14.67-8.52 21.2-4.62 6.53-10.87 10.59-18.78 12.19v-.35z"/></svg>
+      <h1 class="brand-title">Speech-to-Prompt • Apple Fluid Design</h1>
+      <span class="badge-apple">WWDC Spring Physics</span>
+    </div>
+    <div style="font-size: 13px; color: #a1a1aa; font-weight: 500;">
+      RTX 4050 • Faster-Whisper + In-Process GGUF (0.28s)
+    </div>
+  </header>
+
+  <!-- Control Strip with Apple Segmented Control -->
+  <div class="controls-strip">
+    <div class="segmented-control">
+      <span class="segment-label">Material Liquid Glass</span>
+      <button class="segment-btn active" onclick="setMaterial('obsidian')">1. Obsidian Glass (iPhone)</button>
+      <button class="segment-btn" onclick="setMaterial('water')">2. Clear Water (Translúcido)</button>
+      <button class="segment-btn" onclick="setMaterial('spatial')">3. Vision Spatial (Profundo)</button>
+    </div>
+
+    <div class="segmented-control">
+      <span class="segment-label">Estado</span>
+      <button class="segment-btn active" id="btn-state-idle" onclick="setInteractionState('idle')">Idle (Espera)</button>
+      <button class="segment-btn" id="btn-state-recording" onclick="setInteractionState('recording')">Ouvindo</button>
+      <button class="segment-btn" id="btn-state-processing" onclick="setInteractionState('processing')">Reescrevendo</button>
+      <button class="segment-btn" id="btn-state-result" onclick="setInteractionState('result')">Pronto (Ctrl+V)</button>
+    </div>
+
+    <button class="action-apple-primary" onclick="simulateVoiceFlow()">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2H3v2a9 9 0 0 0 8 8.94V23h2v-2.06A9 9 0 0 0 21 12v-2h-2Z"/></svg>
+      Simular Ditado Real (F8)
+    </button>
+  </div>
+
+  <main>
+    <!-- Screen Viewport with Code Editor Behind -->
+    <div class="viewport-container">
+      <div class="viewport-header">
+        <div class="window-dots">
+          <div class="dot dot-red"></div>
+          <div class="dot dot-yellow"></div>
+          <div class="dot dot-green"></div>
+        </div>
+        <div style="font-size: 12px; color: #a1a1aa; font-weight: 500;">
+          ARRASTE A PÍLULA: EXPERIMENTE A FÍSICA DE MOLAS APPLE, REFRAÇÃO E MOMENTUM
+        </div>
+        <div style="font-size: 11px; color: #71717a; font-family: monospace;">
+          Atalho Global [F8]
+        </div>
+      </div>
+
+      <div class="desktop-stage" id="stage">
+        <!-- Background code editor to showcase realistic backdrop blur and refraction -->
+        <div class="ide-behind">
+          <div><span class="syntax-kw">from</span> faster_whisper <span class="syntax-kw">import</span> WhisperModel</div>
+          <div><span class="syntax-kw">from</span> src.embedded_llm <span class="syntax-kw">import</span> EmbeddedLLM</div>
+          <br>
+          <div><span class="syntax-comm"># Pipeline in-process: zero latency de servidores externos</span></div>
+          <div><span class="syntax-fn">whisper_gpu</span> = WhisperModel(<span class="syntax-str">"medium"</span>, device=<span class="syntax-str">"cuda"</span>, compute_type=<span class="syntax-str">"float16"</span>)</div>
+          <div><span class="syntax-fn">embedded_llm</span> = EmbeddedLLM(n_gpu_layers=-<span class="syntax-num">1</span>, n_ctx=<span class="syntax-num">512</span>)</div>
+          <br>
+          <div><span class="syntax-kw">def</span> <span class="syntax-fn">on_voice_stop</span>(raw_text: <span class="syntax-fn">str</span>):</div>
+          <div>&nbsp;&nbsp;&nbsp;&nbsp;prompt = embedded_llm.<span class="syntax-fn">rewrite_prompt</span>(raw_text)  <span class="syntax-comm"># ~0.28s</span></div>
+          <div>&nbsp;&nbsp;&nbsp;&nbsp;pyperclip.<span class="syntax-fn">copy</span>(prompt)  <span class="syntax-comm"># Instantâneo no Ctrl+V</span></div>
+        </div>
+
+        <!-- THE INTERACTIVE LIQUID GLASS DYNAMIC ISLAND (Continuous Apple Spring Solver) -->
+        <div id="apple-island" class="apple-island material-obsidian">
+          <!-- Populated dynamically via JS -->
+        </div>
+      </div>
+    </div>
+
+    <!-- Apple Design Specimen Cards -->
+    <div>
+      <h2 style="font-size: 20px; font-weight: 600; color: #ffffff; margin-bottom: 6px;">
+        Fundamentos Apple Design (WWDC 2018–2024 / Emil Kowalski)
+      </h2>
+      <p style="font-size: 14px; color: #a1a1aa; margin-bottom: 24px; line-height: 1.6;">
+        A interface foi redesenhada seguindo os 4 pilares essenciais: <strong>Resposta no Pointer-Down</strong>, <strong>Manipulação Direta 1:1</strong>, <strong>Interruptibilidade com Molas</strong> e <strong>Translucidez com Bisel de Luz</strong>.
+      </p>
+
+      <div class="cards-grid">
+
+        <!-- Card 1 -->
+        <div class="glass-card" style="border-top: 3px solid #0071e3;">
+          <div class="glass-card-header">
+            <span class="glass-card-title">1. Obsidian Liquid Glass</span>
+            <span class="glass-card-badge">Padrão iOS</span>
+          </div>
+          <div class="glass-card-desc">
+            O material escuro da <strong>Dynamic Island do iPhone 16</strong>. Fundo preto fumê translúcido com 34px de desfoque, saturação reforçada a 220% e uma linha biselada no topo que captura a iluminação ambiente da tela.
+          </div>
+          <button class="apple-btn-secondary" onclick="setMaterial('obsidian')">Selecionar Obsidian</button>
+        </div>
+
+        <!-- Card 2 -->
+        <div class="glass-card" style="border-top: 3px solid #38bdf8;">
+          <div class="glass-card-header">
+            <span class="glass-card-title">2. Clear Prismatic Glass</span>
+            <span class="glass-card-badge">Translúcido</span>
+          </div>
+          <div class="glass-card-desc">
+            Efeito de <strong>vidro líquido cristalino</strong>. Refrata intensamente as cores do que estiver passando atrás dele (o código no VS Code ou o papel de parede), com reflexos brancos puros nas bordas curvas.
+          </div>
+          <button class="apple-btn-secondary" onclick="setMaterial('water')">Selecionar Clear Glass</button>
+        </div>
+
+        <!-- Card 3 -->
+        <div class="glass-card" style="border-top: 3px solid #a855f7;">
+          <div class="glass-card-header">
+            <span class="glass-card-title">3. VisionOS Spatial Glass</span>
+            <span class="glass-card-badge">Profundo</span>
+          </div>
+          <div class="glass-card-desc">
+            Inspirado no <strong>Apple Vision Pro</strong>. Vidro volumétrico com iluminação periférica sutil, absorção dinâmica de luz de fundo e máxima separação de contraste para o texto dos comandos.
+          </div>
+          <button class="apple-btn-secondary" onclick="setMaterial('spatial')">Selecionar Spatial</button>
+        </div>
+
+      </div>
+    </div>
+  </main>
+
+  <div class="toast-apple" id="toast">Copiado para a área de transferência!</div>
+
+  <script>
+    /* ==========================================================================
+       APPLE SPRING PHYSICS SOLVER (WWDC Designing Fluid Interfaces)
+       Response + Damping parameterization:
+       omega = 2 * PI / response
+       k = omega^2
+       c = 2 * damping * omega
+       ========================================================================== */
+    class AppleSpring {
+      constructor(val, damping = 1.0, response = 0.35) {
+        this.current = val;
+        this.target = val;
+        this.velocity = 0;
+        this.damping = damping;
+        this.response = response;
+      }
+
+      setTarget(target, damping = this.damping, response = this.response) {
+        this.target = target;
+        this.damping = damping;
+        this.response = response;
+      }
+
+      update(dt) {
+        dt = Math.min(dt, 0.064);
+        const omega = (2.0 * Math.PI) / Math.max(0.01, this.response);
+        const k = omega * omega;
+        const c = 2.0 * this.damping * omega;
+        const force = -k * (this.current - this.target) - c * this.velocity;
+        this.velocity += force * dt;
+        this.current += this.velocity * dt;
+        return this.current;
+      }
+
+      isAtRest(tolerance = 0.05) {
+        return Math.abs(this.current - this.target) < tolerance && Math.abs(this.velocity) < tolerance;
+      }
+    }
+
+    /* Web Audio API for Apple Causality Audio-Haptics */
+    let audioCtx = null;
+    function playAppleChime(kind = 'start') {
+      try {
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+
+        const now = audioCtx.currentTime;
+        if (kind === 'start') {
+          // Soft Apple bell chime (D5: 587.33Hz)
+          const osc = audioCtx.createOscillator();
+          const gain = audioCtx.createGain();
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(587.33, now);
+          gain.gain.setValueAtTime(0.12, now);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+          osc.connect(gain);
+          gain.connect(audioCtx.destination);
+          osc.start(now);
+          osc.stop(now + 0.36);
+        } else if (kind === 'success') {
+          // Double harmonic chime (C5 -> E5)
+          [523.25, 659.25].forEach((freq, idx) => {
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.type = 'triangle';
+            osc.frequency.setValueAtTime(freq, now + idx * 0.12);
+            gain.gain.setValueAtTime(0.14, now + idx * 0.12);
+            gain.gain.exponentialRampToValueAtTime(0.001, now + idx * 0.12 + 0.45);
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            osc.start(now + idx * 0.12);
+            osc.stop(now + idx * 0.12 + 0.46);
+          });
+        }
+      } catch (e) {}
+    }
+
+    /* State and Interactive Setup */
+    let currentMaterial = 'obsidian';
+    let currentState = 'idle';
+    let simTimer = null;
+
+    const islandEl = document.getElementById('apple-island');
+    const stageEl = document.getElementById('stage');
+
+    // Springs for 2D position and dimensions (Interruptible continuous physics)
+    let centerX = 0;
+    let centerY = 0;
+    const springX = new AppleSpring(0, 1.0, 0.35);
+    const springY = new AppleSpring(0, 1.0, 0.35);
+    const springW = new AppleSpring(320, 1.0, 0.35);
+    const springH = new AppleSpring(48, 1.0, 0.35);
+    const springScale = new AppleSpring(1.0, 1.0, 0.15);
+
+    // Direct pointer manipulation tracking with release velocity
+    let isDragging = false;
+    let grabOffsetX = 0;
+    let grabOffsetY = 0;
+    let lastPointerX = 0;
+    let lastPointerY = 0;
+    let pointerVelocityX = 0;
+    let pointerVelocityY = 0;
+    let lastTime = performance.now();
+
+    function initPositions() {
+      const rect = stageEl.getBoundingClientRect();
+      centerX = rect.width / 2;
+      centerY = rect.height - 75; // Anchored near bottom center
+      springX.current = centerX;
+      springX.target = centerX;
+      springY.current = centerY;
+      springY.target = centerY;
+    }
+
+    function setMaterial(mat) {
+      currentMaterial = mat;
+      document.querySelectorAll('.segmented-control:first-child .segment-btn').forEach((btn, idx) => {
+        btn.classList.toggle('active', (mat === 'obsidian' && idx === 0) || (mat === 'water' && idx === 1) || (mat === 'spatial' && idx === 2));
+      });
+      islandEl.className = `apple-island material-${mat}`;
+    }
+
+    function setInteractionState(state) {
+      currentState = state;
+      ['idle', 'recording', 'processing', 'result'].forEach(s => {
+        const btn = document.getElementById(`btn-state-${s}`);
+        if (btn) btn.classList.toggle('active', s === state);
+      });
+
+      if (state === 'idle') {
+        springW.setTarget(320, 1.0, 0.34);
+        springH.setTarget(48, 1.0, 0.34);
+      } else if (state === 'recording') {
+        playAppleChime('start');
+        springW.setTarget(500, 1.0, 0.32);
+        springH.setTarget(172, 1.0, 0.32);
+      } else if (state === 'processing') {
+        springW.setTarget(360, 1.0, 0.34);
+        springH.setTarget(54, 1.0, 0.34);
+      } else if (state === 'result') {
+        playAppleChime('success');
+        springW.setTarget(540, 1.0, 0.32);
+        springH.setTarget(184, 1.0, 0.32);
+      }
+      renderContent();
+    }
+
+    function showToast(msg) {
+      const toast = document.getElementById('toast');
+      toast.innerText = msg;
+      toast.style.display = 'block';
+      setTimeout(() => { toast.style.display = 'none'; }, 2200);
+    }
+
+    function copyToClipboard(text) {
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText(text);
+      }
+      playAppleChime('success');
+      showToast("✓ Prompt copiado para a área de transferência!");
+    }
+
+    function renderContent() {
+      if (currentState === 'idle') {
+        islandEl.innerHTML = `
+          <div style="display: flex; align-items: center; justify-content: space-between; padding: 12px 20px; height: 100%;">
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <span class="glow-dot"></span>
+              <span style="font-size: 13.5px; font-weight: 500; letter-spacing: -0.015em;">Pronto para ditar</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span style="font-family: 'Atkinson Hyperlegible Mono', monospace; font-size: 11px; font-weight: 600; background: rgba(255,255,255,0.14); padding: 3px 8px; border-radius: 9999px; border: 1px solid rgba(255,255,255,0.14);">F8</span>
+            </div>
+          </div>
+        `;
+      } else if (currentState === 'recording') {
+        islandEl.innerHTML = `
+          <div style="padding: 16px 22px; display: flex; flex-direction: column; justify-content: space-between; height: 100%;">
+            <div style="display: flex; align-items: center; justify-content: space-between;">
+              <div style="display: flex; align-items: center; gap: 9px;">
+                <span class="glow-dot recording"></span>
+                <span style="font-size: 12px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;">Ouvindo sua voz</span>
+              </div>
+              <span style="font-size: 12px; font-weight: 600; font-family: monospace; opacity: 0.9;">00:03.4</span>
+            </div>
+
+            <!-- Apple Waveform Sound Bars -->
+            <div class="wave-container">
+              <div class="wave-bar" style="height: 12px;"></div>
+              <div class="wave-bar" style="height: 24px;"></div>
+              <div class="wave-bar" style="height: 38px;"></div>
+              <div class="wave-bar" style="height: 18px;"></div>
+              <div class="wave-bar" style="height: 32px;"></div>
+              <div class="wave-bar" style="height: 28px;"></div>
+              <div class="wave-bar" style="height: 14px;"></div>
+            </div>
+
+            <!-- Live Speech Bubble -->
+            <div style="font-size: 13px; line-height: 1.5; color: rgba(255,255,255,0.95); font-style: italic; background: rgba(0,0,0,0.25); padding: 10px 14px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.08);">
+              "cria uma função em python pra calcular média móvel com pandas..."
+            </div>
+
+            <div style="display: flex; justify-content: space-between; font-size: 11px; opacity: 0.7;">
+              <span>Auto-stop após 3s de silêncio</span>
+              <span>Pressione F8 para concluir</span>
+            </div>
+          </div>
+        `;
+      } else if (currentState === 'processing') {
+        islandEl.innerHTML = `
+          <div style="display: flex; align-items: center; justify-content: center; gap: 14px; height: 100%; padding: 0 20px;">
+            <div style="width: 17px; height: 17px; border: 2px solid rgba(255,255,255,0.2); border-top-color: #0071e3; border-radius: 50%; animation: spin-apple 0.75s linear infinite;"></div>
+            <span style="font-size: 13.5px; font-weight: 500;">
+              Sintetizando Prompt (0.28s)...
+            </span>
+          </div>
+        `;
+      } else if (currentState === 'result') {
+        islandEl.innerHTML = `
+          <div style="padding: 18px 22px; display: flex; flex-direction: column; justify-content: space-between; height: 100%;">
+            <div style="display: flex; align-items: center; justify-content: space-between;">
+              <span style="font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #34c759;">Prompt Pronto no Ctrl+V</span>
+              <span style="font-size: 11px; font-weight: 600; opacity: 0.75; font-family: monospace;">⚡ 0.28s na GPU</span>
+            </div>
+
+            <div style="font-size: 13.5px; line-height: 1.55; color: #ffffff; background: rgba(0,0,0,0.3); padding: 14px 16px; border-radius: 14px; border: 1px solid rgba(255,255,255,0.1);">
+              Crie uma função em Python para calcular a média móvel de uma série temporal usando pandas e retorne o resultado em um DataFrame.
+            </div>
+
+            <div style="display: flex; justify-content: flex-end; gap: 10px;">
+              <button onclick="copyToClipboard('Crie uma função em Python para calcular a média móvel de uma série temporal usando pandas e retorne o resultado em um DataFrame.')" style="background: #0071e3; color: #ffffff; border: none; font-size: 12.5px; font-weight: 600; padding: 7px 18px; border-radius: 9999px; cursor: pointer; box-shadow: 0 4px 12px rgba(0, 113, 227, 0.4);">
+                Copiar Novamente
+              </button>
+              <button onclick="setInteractionState('idle')" style="background: rgba(255,255,255,0.14); color: #ffffff; border: 1px solid rgba(255,255,255,0.15); font-size: 12.5px; font-weight: 500; padding: 7px 16px; border-radius: 9999px; cursor: pointer;">
+                Fechar
+              </button>
+            </div>
+          </div>
+        `;
+      }
+    }
+
+    /* Direct Manipulation (Pointer Events with Velocity Handoff & Momentum) */
+    islandEl.addEventListener('pointerdown', (e) => {
+      isDragging = true;
+      islandEl.setPointerCapture(e.pointerId);
+      springScale.setTarget(0.97, 1.0, 0.15); // Instant feedback on pointer down!
+
+      const rect = islandEl.getBoundingClientRect();
+      const stageRect = stageEl.getBoundingClientRect();
+      grabOffsetX = e.clientX - rect.left - rect.width / 2;
+      grabOffsetY = e.clientY - rect.top - rect.height / 2;
+      lastPointerX = e.clientX;
+      lastPointerY = e.clientY;
+      pointerVelocityX = 0;
+      pointerVelocityY = 0;
+    });
+
+    window.addEventListener('pointermove', (e) => {
+      if (!isDragging) return;
+      const stageRect = stageEl.getBoundingClientRect();
+      const now = performance.now();
+      const dt = Math.max(0.001, (now - lastTime) / 1000);
+
+      // Track pointer velocity
+      pointerVelocityX = (e.clientX - lastPointerX) / dt;
+      pointerVelocityY = (e.clientY - lastPointerY) / dt;
+      lastPointerX = e.clientX;
+      lastPointerY = e.clientY;
+      lastTime = now;
+
+      // Follow pointer 1:1
+      const targetX = e.clientX - stageRect.left - grabOffsetX;
+      const targetY = e.clientY - stageRect.top - grabOffsetY;
+      springX.current = targetX;
+      springY.current = targetY;
+      springX.target = targetX;
+      springY.target = targetY;
+    });
+
+    window.addEventListener('pointerup', (e) => {
+      if (!isDragging) return;
+      isDragging = false;
+      springScale.setTarget(1.0, 0.85, 0.2);
+
+      // Momentum projection: project release endpoint
+      const decel = 0.998;
+      const projX = (pointerVelocityX / 1000) * decel / (1 - decel);
+      const projY = (pointerVelocityY / 1000) * decel / (1 - decel);
+
+      // Snap back toward comfortable center anchor with momentum
+      springX.velocity = pointerVelocityX;
+      springY.velocity = pointerVelocityY;
+      springX.setTarget(centerX, 0.82, 0.38); // Under-damped with gentle physical settle!
+      springY.setTarget(centerY, 0.82, 0.38);
+    });
+
+    /* Continuous 60fps Animation Loop */
+    let prevFrameTime = performance.now();
+    function animateLoop() {
+      const now = performance.now();
+      const dt = (now - prevFrameTime) / 1000;
+      prevFrameTime = now;
+
+      const curX = springX.update(dt);
+      const curY = springY.update(dt);
+      const curW = springW.update(dt);
+      const curH = springH.update(dt);
+      const curScale = springScale.update(dt);
+
+      islandEl.style.width = `${curW}px`;
+      islandEl.style.height = `${curH}px`;
+      islandEl.style.left = `${curX - curW / 2}px`;
+      islandEl.style.top = `${curY - curH / 2}px`;
+      islandEl.style.transform = `scale(${curScale})`;
+
+      requestAnimationFrame(animateLoop);
+    }
+
+    /* Simulation Function */
+    function simulateVoiceFlow() {
+      if (simTimer) clearTimeout(simTimer);
+      setInteractionState('recording');
+
+      simTimer = setTimeout(() => {
+        setInteractionState('processing');
+        simTimer = setTimeout(() => {
+          setInteractionState('result');
+          showToast("⚡ Prompt sintetizado em 0.28s e pronto no Ctrl+V!");
+        }, 750);
+      }, 2500);
+    }
+
+    // Keyframes
+    const styleEl = document.createElement('style');
+    styleEl.innerHTML = `@keyframes spin-apple { to { transform: rotate(360deg); } }`;
+    document.head.appendChild(styleEl);
+
+    // Initialize
+    setTimeout(() => {
+      initPositions();
+      setMaterial('obsidian');
+      setInteractionState('idle');
+      requestAnimationFrame(animateLoop);
+    }, 50);
+
+    window.addEventListener('resize', initPositions);
+  </script>
+</body>
+</html>
