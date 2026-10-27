@@ -146,8 +146,14 @@ app._animation_tick()
 assert app.is_silence_countdown, "Falha: is_silence_countdown deve ser True após 1s de silêncio pós-fala"
 print("   -> Contagem de silêncio ativada: is_silence_countdown = True")
 
-# Simula 2.1s de silêncio pós-fala (superando o SILENCE_TIMEOUT_S = 2.0s)
-app.last_speech_time = time.time() - 2.1
+# Simula 2.0s de silêncio pós-fala (ainda dentro da tolerância de 3.0s para pausas naturais)
+app.last_speech_time = time.time() - 2.0
+app.last_frame_time = time.perf_counter() - 0.02
+app._animation_tick()
+assert app.state == "recording", "Gravação deve continuar ativa aos 2.0s com timeout de 3.0s"
+
+# Simula 3.1s de silêncio pós-fala (superando o SILENCE_TIMEOUT_S = 3.0s)
+app.last_speech_time = time.time() - 3.1
 app.last_frame_time = time.perf_counter() - 0.02
 app._animation_tick()
 
